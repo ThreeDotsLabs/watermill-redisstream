@@ -92,15 +92,9 @@ type SubscriberConfig struct {
 
 	// How long a idle consumer should be evicted
 	ConsumerEvictTime time.Duration
-
-	// Do not del job right after handled
-	DoNotDelMessage bool
 }
 
 func (sc *SubscriberConfig) Validate() error {
-	if sc.ConsumerGroup == "" {
-		return errors.New("ConsumerGroup empty")
-	}
 	if sc.Consumer == "" {
 		sc.Consumer = shortuuid.New()
 	}
@@ -162,10 +156,11 @@ func (s *Subscriber) consumeMessages(ctx context.Context, topic string, output c
 			// avoid goroutine leak
 		}
 	}()
-
-	// create consumer group
-	if _, err := s.rc.XGroupCreateMkStream(s.ctx, topic, s.config.ConsumerGroup, oldestId).Result(); err != nil && err.Error() != redisBusyGroup {
-		return nil, err
+	if s.config.ConsumerGroup != "" {
+		// create consumer group
+		if _, err := s.rc.XGroupCreateMkStream(s.ctx, topic, s.config.ConsumerGroup, oldestId).Result(); err != nil && err.Error() != redisBusyGroup {
+			return nil, err
+		}
 	}
 
 	consumeMessageClosed, err = s.consumeStreams(ctx, topic, output, logFields)
@@ -224,19 +219,26 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 		close(readChannel)
 	}()
 	var (
-		streams = []string{stream, groupStartid}
-		xss     []redis.XStream
-		xs      *redis.XStream
-		err     error
+		streamsGroup = []string{stream, groupStartid}
+
+		fanOutStartid               = "$"
+		countFanOut   int64         = 0
+		blockTime     time.Duration = 0
+
+		xss []redis.XStream
+		xs  *redis.XStream
+		err error
 	)
 
-	// 1. get pending job from idle consumer
-	wg.Add(1)
-	s.claim(claimCtx, stream, readChannel, false, wg, logFields)
+	if s.config.ConsumerGroup != "" {
+		// 1. get pending job from idle consumer
+		wg.Add(1)
+		s.claim(claimCtx, stream, readChannel, false, wg, logFields)
 
-	// 2. background
-	wg.Add(1)
-	go s.claim(claimCtx, stream, readChannel, true, wg, logFields)
+		// 2. background
+		wg.Add(1)
+		go s.claim(claimCtx, stream, readChannel, true, wg, logFields)
+	}
 
 	for {
 		select {
@@ -245,25 +247,40 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 		case <-ctx.Done():
 			return
 		default:
-			xss, err = s.rc.XReadGroup(
-				s.ctx,
-				&redis.XReadGroupArgs{
-					Group:    s.config.ConsumerGroup,
-					Consumer: s.config.Consumer,
-					Streams:  streams,
-					Count:    1,
-					Block:    DefaultBlockTime,
-				}).Result()
+			if s.config.ConsumerGroup != "" {
+				xss, err = s.rc.XReadGroup(
+					s.ctx,
+					&redis.XReadGroupArgs{
+						Group:    s.config.ConsumerGroup,
+						Consumer: s.config.Consumer,
+						Streams:  streamsGroup,
+						Count:    1,
+						Block:    blockTime,
+					}).Result()
+			} else {
+				xss, err = s.rc.XRead(
+					s.ctx,
+					&redis.XReadArgs{
+						Streams: []string{stream, fanOutStartid},
+						Count:   countFanOut,
+						Block:   DefaultBlockTime,
+					}).Result()
+			}
 			if err == redis.Nil {
-				break
+				continue
 			} else if err != nil {
-				s.logger.Error("xreadgroup fail", err, logFields)
+				s.logger.Error("read fail", err, logFields)
 			}
 			if len(xss) < 1 || len(xss[0].Messages) < 1 {
-				break
+				continue
 			}
 			// update last delivered id
 			xs = &xss[0]
+			if s.config.ConsumerGroup == "" {
+				fanOutStartid = xs.Messages[0].ID
+				countFanOut = 1
+				blockTime = DefaultBlockTime
+			}
 			select {
 			case <-s.closing:
 				return
@@ -370,7 +387,6 @@ func (s *Subscriber) createMessageHandler(output chan *message.Message) messageH
 		rc:              s.rc,
 		consumerGroup:   s.config.ConsumerGroup,
 		unmarshaler:     s.unmarshaller,
-		del:             !s.config.DoNotDelMessage,
 		nackResendSleep: s.config.NackResendSleep,
 		logger:          s.logger,
 		closing:         s.closing,
@@ -396,7 +412,6 @@ type messageHandler struct {
 	rc            redis.UniversalClient
 	consumerGroup string
 	unmarshaler   Unmarshaler
-	del           bool
 
 	nackResendSleep time.Duration
 
@@ -443,9 +458,8 @@ ResendLoop:
 		case <-msg.Acked():
 			// deadly retry ack
 			p := h.rc.Pipeline()
-			p.XAck(ctx, stream, h.consumerGroup, xm.ID)
-			if h.del {
-				p.XDel(ctx, stream, xm.ID)
+			if h.consumerGroup != "" {
+				p.XAck(ctx, stream, h.consumerGroup, xm.ID)
 			}
 			err := retry.Retry(func(attempt uint) error {
 				_, err := p.Exec(ctx)

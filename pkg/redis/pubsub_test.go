@@ -58,21 +58,8 @@ func createPubSub(t *testing.T) (message.Publisher, message.Subscriber) {
 
 func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.Publisher, message.Subscriber) {
 	return newPubSub(t, &DefaultMarshaler{}, &SubscriberConfig{
-		Consumer:        shortuuid.New(),
-		ConsumerGroup:   consumerGroup,
-		DoNotDelMessage: true,
-	})
-}
-
-func createPubSubWithDel(t *testing.T) (message.Publisher, message.Subscriber) {
-	return createPubSubWithConsumerGroupWithDel(t, shortuuid.New())
-}
-
-func createPubSubWithConsumerGroupWithDel(t *testing.T, consumerGroup string) (message.Publisher, message.Subscriber) {
-	return newPubSub(t, &DefaultMarshaler{}, &SubscriberConfig{
-		Consumer:        shortuuid.New(),
-		ConsumerGroup:   consumerGroup,
-		DoNotDelMessage: false,
+		Consumer:      shortuuid.New(),
+		ConsumerGroup: consumerGroup,
 	})
 }
 
@@ -95,30 +82,27 @@ func TestPublishSubscribe(t *testing.T) {
 	tests.TestPubSub(t, features, createPubSub, createPubSubWithConsumerGroup)
 }
 
-func TestPublishSubscribeWithDel(t *testing.T) {
-	features := tests.Features{
-		ConsumerGroups:                      false,
-		ExactlyOnceDelivery:                 true,
-		GuaranteedOrder:                     false,
-		GuaranteedOrderWithSingleSubscriber: true,
-		Persistent:                          true,
-		//RestartServiceCommand: []string{
-		//	`docker`,
-		//	`restart`,
-		//	`redis-simple`,
-		//},
-		RequireSingleInstance:            false,
-		NewSubscriberReceivesOldMessages: true,
-	}
-
-	tests.TestPubSub(t, features, createPubSubWithDel, createPubSubWithConsumerGroupWithDel)
-}
-
 func TestSubscriber(t *testing.T) {
-	topic := "test-topic1"
+
+	topic := "test-topic-subscriber"
 	ctx := context.Background()
 	rc, err := redisClient(ctx)
 	require.NoError(t, err)
+
+	subscriber, err := NewSubscriber(
+		ctx,
+		SubscriberConfig{
+			Consumer:      shortuuid.New(),
+			ConsumerGroup: "test-consumer-group",
+		},
+		rc,
+		&DefaultMarshaler{},
+		watermill.NewStdLogger(true, false),
+	)
+	require.NoError(t, err)
+	messages, err := subscriber.Subscribe(context.Background(), topic)
+	require.NoError(t, err)
+
 	publisher, err := NewPublisher(ctx, rc, &DefaultMarshaler{}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
 
@@ -127,20 +111,6 @@ func TestSubscriber(t *testing.T) {
 	}
 	require.NoError(t, publisher.Close())
 
-	subscriber, err := NewSubscriber(
-		ctx,
-		SubscriberConfig{
-			Consumer:        "consumer1",
-			ConsumerGroup:   "test-consumer-group",
-			DoNotDelMessage: false,
-		},
-		rc,
-		&DefaultMarshaler{},
-		watermill.NewStdLogger(true, true),
-	)
-	require.NoError(t, err)
-	messages, err := subscriber.Subscribe(context.Background(), topic)
-	require.NoError(t, err)
 	for i := 0; i < 50; i++ {
 		msg := <-messages
 		if msg == nil {
@@ -151,4 +121,71 @@ func TestSubscriber(t *testing.T) {
 	}
 
 	require.NoError(t, subscriber.Close())
+}
+
+func TestFanOut(t *testing.T) {
+	topic := "test-topic-fanout"
+	ctx := context.Background()
+	rc, err := redisClient(ctx)
+	require.NoError(t, err)
+
+	subscriber1, err := NewSubscriber(
+		ctx,
+		SubscriberConfig{
+			Consumer:      shortuuid.New(),
+			ConsumerGroup: "",
+		},
+		rc,
+		&DefaultMarshaler{},
+		watermill.NewStdLogger(true, false),
+	)
+	require.NoError(t, err)
+
+	subscriber2, err := NewSubscriber(
+		ctx,
+		SubscriberConfig{
+			Consumer:      shortuuid.New(),
+			ConsumerGroup: "",
+		},
+		rc,
+		&DefaultMarshaler{},
+		watermill.NewStdLogger(true, false),
+	)
+	require.NoError(t, err)
+
+	messages1, err := subscriber1.Subscribe(context.Background(), topic)
+	require.NoError(t, err)
+	messages2, err := subscriber2.Subscribe(context.Background(), topic)
+	require.NoError(t, err)
+
+	// wait for initial XREAD before publishing messages to avoid message loss
+	time.Sleep(DefaultBlockTime)
+
+	publisher, err := NewPublisher(ctx, rc, &DefaultMarshaler{}, watermill.NewStdLogger(false, false))
+	require.NoError(t, err)
+
+	for i := 0; i < 50; i++ {
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
+	}
+	require.NoError(t, publisher.Close())
+
+	for i := 0; i < 50; i++ {
+		msg := <-messages1
+		if msg == nil {
+			t.Fatal("msg nil")
+		}
+		t.Logf("subscriber 1: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		msg.Ack()
+	}
+	for i := 0; i < 50; i++ {
+		msg := <-messages2
+		if msg == nil {
+			t.Fatal("msg nil")
+		}
+		t.Logf("subscriber 2: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		msg.Ack()
+	}
+
+	require.NoError(t, subscriber1.Close())
+	require.NoError(t, subscriber2.Close())
 }

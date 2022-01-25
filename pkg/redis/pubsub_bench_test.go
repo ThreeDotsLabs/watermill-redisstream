@@ -28,9 +28,8 @@ func BenchmarkSubscriber(b *testing.B) {
 		subscriber, err := NewSubscriber(
 			ctx,
 			SubscriberConfig{
-				Consumer:        shortuuid.New(),
-				ConsumerGroup:   shortuuid.New(),
-				DoNotDelMessage: false,
+				Consumer:      shortuuid.New(),
+				ConsumerGroup: shortuuid.New(),
 			},
 			rc,
 			&DefaultMarshaler{},
