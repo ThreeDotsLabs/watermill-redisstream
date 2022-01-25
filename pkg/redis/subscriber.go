@@ -20,20 +20,18 @@ const (
 )
 
 const (
-	// NoSleep can be set to SubscriberConfig.NackResendSleep and SubscriberConfig.ReconnectRetrySleep.
+	// NoSleep can be set to SubscriberConfig.NackResendSleep and SubscriberConfig.ReconnectRetrySleep
 	NoSleep time.Duration = -1
 
-	// Block to wait next redis stream message.
+	// Block to wait next redis stream message
 	DefaultBlockTime time.Duration = time.Millisecond * 100
 
-	// Claim idle pending job every 5 seconds.
+	// Claim idle pending message every 5 seconds
 	DefaultClaimInterval time.Duration = time.Second * 5
 
-	// Default max idle time for pending job.
+	// Default max idle time for pending message.
+	// After timeout, the message will be claimed and its idle consumer will be removed from consumer group
 	DefaultMaxIdleTime time.Duration = time.Second * 60
-
-	// Default max idle time for a consumer to be evict from comsumer group
-	DefaultConsumerEvictTime time.Duration = time.Minute * 30
 )
 
 type Subscriber struct {
@@ -50,7 +48,7 @@ type Subscriber struct {
 	closed bool
 }
 
-// NewSubscriber creates a new redis stream Subscriber.
+// NewSubscriber creates a new redis stream Subscriber
 func NewSubscriber(ctx context.Context, config SubscriberConfig, rc redis.UniversalClient, unmarshaler Unmarshaler, logger watermill.LoggerAdapter) (message.Subscriber, error) {
 	if logger == nil {
 		logger = &watermill.NopLogger{}
@@ -70,9 +68,8 @@ func NewSubscriber(ctx context.Context, config SubscriberConfig, rc redis.Univer
 
 func DefaultSubscriberConfig() SubscriberConfig {
 	return SubscriberConfig{
-		NackResendSleep:   NoSleep,
-		MaxIdleTime:       DefaultMaxIdleTime,
-		ConsumerEvictTime: DefaultConsumerEvictTime,
+		NackResendSleep: NoSleep,
+		MaxIdleTime:     DefaultMaxIdleTime,
 	}
 }
 
@@ -80,18 +77,14 @@ type SubscriberConfig struct {
 	// Redis stream consumer id
 	// Pair with ConsumerGroup
 	Consumer string
-	// Redis stream consumer group.
-	// When empty, messages will delete right after consumed
+	// When empty, fan-out mode will be used
 	ConsumerGroup string
 
-	// How long after Nack message should be redelivered.
+	// How long after Nack message should be redelivered
 	NackResendSleep time.Duration
 
 	// How long should we treat a consumer as offline
 	MaxIdleTime time.Duration
-
-	// How long a idle consumer should be evicted
-	ConsumerEvictTime time.Duration
 }
 
 func (sc *SubscriberConfig) Validate() error {
@@ -103,9 +96,6 @@ func (sc *SubscriberConfig) Validate() error {
 	}
 	if sc.MaxIdleTime < 1 {
 		sc.MaxIdleTime = DefaultMaxIdleTime
-	}
-	if sc.ConsumerEvictTime < 1 {
-		sc.ConsumerEvictTime = DefaultConsumerEvictTime
 	}
 	return nil
 }
@@ -231,7 +221,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 	)
 
 	if s.config.ConsumerGroup != "" {
-		// 1. get pending job from idle consumer
+		// 1. get pending message from idle consumer
 		wg.Add(1)
 		s.claim(claimCtx, stream, readChannel, false, wg, logFields)
 
@@ -274,7 +264,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			if len(xss) < 1 || len(xss[0].Messages) < 1 {
 				continue
 			}
-			// update last delivered id
+			// update last delivered message
 			xs = &xss[0]
 			if s.config.ConsumerGroup == "" {
 				fanOutStartid = xs.Messages[0].ID
@@ -345,7 +335,7 @@ OUTER_LOOP:
 			}
 
 			if xp.Idle >= s.config.MaxIdleTime {
-				// claim this
+				// assign the ownership of a pending message to the current consumer
 				xm, err = s.rc.XClaim(s.ctx, &redis.XClaimArgs{
 					Stream:   stream,
 					Group:    s.config.ConsumerGroup,
@@ -356,6 +346,15 @@ OUTER_LOOP:
 				if err != nil {
 					s.logger.Error(
 						"xclaim fail",
+						err,
+						logFields.Add(watermill.LogFields{"xp": xp}),
+					)
+					continue OUTER_LOOP
+				}
+				// delete idle consumer
+				if err = s.rc.XGroupDelConsumer(s.ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
+					s.logger.Error(
+						"xgroupdelconsumer fail",
 						err,
 						logFields.Add(watermill.LogFields{"xp": xp}),
 					)

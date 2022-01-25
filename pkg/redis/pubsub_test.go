@@ -66,7 +66,7 @@ func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.
 func TestPublishSubscribe(t *testing.T) {
 	features := tests.Features{
 		ConsumerGroups:                      true,
-		ExactlyOnceDelivery:                 true,
+		ExactlyOnceDelivery:                 false,
 		GuaranteedOrder:                     false,
 		GuaranteedOrderWithSingleSubscriber: true,
 		Persistent:                          true,
@@ -159,7 +159,7 @@ func TestFanOut(t *testing.T) {
 	require.NoError(t, err)
 
 	// wait for initial XREAD before publishing messages to avoid message loss
-	time.Sleep(DefaultBlockTime)
+	time.Sleep(2 * DefaultBlockTime)
 
 	publisher, err := NewPublisher(ctx, rc, &DefaultMarshaler{}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
