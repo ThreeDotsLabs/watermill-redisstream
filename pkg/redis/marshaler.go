@@ -8,22 +8,22 @@ import (
 
 const UUIDHeaderKey = "_watermill_message_uuid"
 
-type Marshaler interface {
+type Marshaller interface {
 	Marshal(topic string, msg *message.Message) (map[string]interface{}, error)
 }
 
-type Unmarshaler interface {
+type Unmarshaller interface {
 	Unmarshal(values map[string]interface{}) (msg *message.Message, err error)
 }
 
 type MarshalerUnmarshaler interface {
-	Marshaler
-	Unmarshaler
+	Marshaller
+	Unmarshaller
 }
 
-type DefaultMarshaler struct{}
+type DefaultMarshaller struct{}
 
-func (DefaultMarshaler) Marshal(_ string, msg *message.Message) (map[string]interface{}, error) {
+func (DefaultMarshaller) Marshal(_ string, msg *message.Message) (map[string]interface{}, error) {
 	if value := msg.Metadata.Get(UUIDHeaderKey); value != "" {
 		return nil, errors.Errorf("metadata %s is reserved by watermill for message UUID", UUIDHeaderKey)
 	}
@@ -45,7 +45,7 @@ func (DefaultMarshaler) Marshal(_ string, msg *message.Message) (map[string]inte
 	}, nil
 }
 
-func (DefaultMarshaler) Unmarshal(values map[string]interface{}) (msg *message.Message, err error) {
+func (DefaultMarshaller) Unmarshal(values map[string]interface{}) (msg *message.Message, err error) {
 	msg = message.NewMessage(values[UUIDHeaderKey].(string), []byte(values["payload"].(string)))
 
 	md := values["metadata"]

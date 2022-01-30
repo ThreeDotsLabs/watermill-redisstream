@@ -10,9 +10,10 @@ import (
 )
 
 type Publisher struct {
-	ctx       context.Context
-	rc        redis.UniversalClient
-	marshaler Marshaler
+	ctx        context.Context
+	config     PublisherConfig
+	rc         redis.UniversalClient
+	marshaller Marshaller
 
 	logger watermill.LoggerAdapter
 
@@ -20,12 +21,34 @@ type Publisher struct {
 }
 
 // NewPublisher creates a new redis stream Publisher.
-func NewPublisher(ctx context.Context, rc redis.UniversalClient, marshaller Marshaler, logger watermill.LoggerAdapter) (message.Publisher, error) {
+func NewPublisher(ctx context.Context, config PublisherConfig, rc redis.UniversalClient, marshaller Marshaller, logger watermill.LoggerAdapter) (message.Publisher, error) {
 	if logger == nil {
 		logger = &watermill.NopLogger{}
 	}
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	return &Publisher{
+		ctx:        ctx,
+		config:     config,
+		rc:         rc,
+		marshaller: marshaller,
+		logger:     logger,
+		closed:     false,
+	}, nil
+}
 
-	return &Publisher{ctx, rc, marshaller, logger, false}, nil
+type PublisherConfig struct {
+	Maxlens map[string]int64
+}
+
+func (sc *PublisherConfig) Validate() error {
+	for topic, maxlen := range sc.Maxlens {
+		if maxlen < 0 {
+			sc.Maxlens[topic] = 0
+		}
+	}
+	return nil
 }
 
 // Publish publishes message to redis stream
@@ -44,14 +67,21 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 		logFields["message_uuid"] = msg.UUID
 		p.logger.Trace("Sending message to redis stream", logFields)
 
-		values, err := p.marshaler.Marshal(topic, msg)
+		values, err := p.marshaller.Marshal(topic, msg)
 		if err != nil {
 			return errors.Wrapf(err, "cannot marshal message %s", msg.UUID)
+		}
+
+		maxlen, ok := p.config.Maxlens[topic]
+		if !ok {
+			maxlen = 0
 		}
 
 		id, err := p.rc.XAdd(context.Background(), &redis.XAddArgs{
 			Stream: topic,
 			Values: values,
+			MaxLen: maxlen,
+			Approx: true,
 		}).Result()
 		if err != nil {
 			return errors.Wrapf(err, "cannot xadd message %s", msg.UUID)

@@ -10,7 +10,7 @@ import (
 )
 
 func TestDefaultMarshaler_MarshalUnmarshal(t *testing.T) {
-	m := DefaultMarshaler{}
+	m := DefaultMarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
 	msg.Metadata.Set("foo", "bar")
@@ -27,7 +27,7 @@ func TestDefaultMarshaler_MarshalUnmarshal(t *testing.T) {
 }
 
 func BenchmarkDefaultMarshaler_Marshal(b *testing.B) {
-	m := DefaultMarshaler{}
+	m := DefaultMarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
 	msg.Metadata.Set("foo", "bar")
@@ -38,7 +38,7 @@ func BenchmarkDefaultMarshaler_Marshal(b *testing.B) {
 }
 
 func BenchmarkDefaultMarshaler_Unmarshal(b *testing.B) {
-	m := DefaultMarshaler{}
+	m := DefaultMarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
 	msg.Metadata.Set("foo", "bar")

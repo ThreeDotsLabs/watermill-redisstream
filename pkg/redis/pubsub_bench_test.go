@@ -20,7 +20,7 @@ func BenchmarkSubscriber(b *testing.B) {
 	tests.BenchSubscriber(b, func(n int) (message.Publisher, message.Subscriber) {
 		logger := watermill.NopLogger{}
 
-		publisher, err := NewPublisher(ctx, rc, &DefaultMarshaler{}, logger)
+		publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, logger)
 		if err != nil {
 			panic(err)
 		}
@@ -32,7 +32,7 @@ func BenchmarkSubscriber(b *testing.B) {
 				ConsumerGroup: shortuuid.New(),
 			},
 			rc,
-			&DefaultMarshaler{},
+			&DefaultMarshaller{},
 			logger,
 		)
 		if err != nil {

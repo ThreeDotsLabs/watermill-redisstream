@@ -39,7 +39,7 @@ type Subscriber struct {
 	config SubscriberConfig
 	rc     redis.UniversalClient
 
-	unmarshaller Unmarshaler
+	unmarshaller Unmarshaller
 	logger       watermill.LoggerAdapter
 
 	closing       chan struct{}
@@ -49,7 +49,7 @@ type Subscriber struct {
 }
 
 // NewSubscriber creates a new redis stream Subscriber
-func NewSubscriber(ctx context.Context, config SubscriberConfig, rc redis.UniversalClient, unmarshaler Unmarshaler, logger watermill.LoggerAdapter) (message.Subscriber, error) {
+func NewSubscriber(ctx context.Context, config SubscriberConfig, rc redis.UniversalClient, unmarshaller Unmarshaller, logger watermill.LoggerAdapter) (message.Subscriber, error) {
 	if logger == nil {
 		logger = &watermill.NopLogger{}
 	}
@@ -60,7 +60,7 @@ func NewSubscriber(ctx context.Context, config SubscriberConfig, rc redis.Univer
 		ctx:          ctx,
 		config:       config,
 		rc:           rc,
-		unmarshaller: unmarshaler,
+		unmarshaller: unmarshaller,
 		logger:       logger,
 		closing:      make(chan struct{}),
 	}, nil
@@ -410,7 +410,7 @@ type messageHandler struct {
 	outputChannel chan<- *message.Message
 	rc            redis.UniversalClient
 	consumerGroup string
-	unmarshaler   Unmarshaler
+	unmarshaler   Unmarshaller
 
 	nackResendSleep time.Duration
 

@@ -22,7 +22,7 @@ var (
 func redisClient(ctx context.Context) (redis.UniversalClient, error) {
 	if client == nil {
 		client = redis.NewClient(&redis.Options{
-			Addr:         "127.0.0.1:6380",
+			Addr:         "127.0.0.1:6379",
 			DB:           0,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
@@ -43,7 +43,7 @@ func newPubSub(t *testing.T, marshaler MarshalerUnmarshaler, subConfig *Subscrib
 	rc, err := redisClient(ctx)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(ctx, rc, marshaler, logger)
+	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, marshaler, logger)
 	require.NoError(t, err)
 
 	subscriber, err := NewSubscriber(ctx, *subConfig, rc, marshaler, logger)
@@ -57,7 +57,7 @@ func createPubSub(t *testing.T) (message.Publisher, message.Subscriber) {
 }
 
 func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.Publisher, message.Subscriber) {
-	return newPubSub(t, &DefaultMarshaler{}, &SubscriberConfig{
+	return newPubSub(t, &DefaultMarshaller{}, &SubscriberConfig{
 		Consumer:      shortuuid.New(),
 		ConsumerGroup: consumerGroup,
 	})
@@ -96,14 +96,14 @@ func TestSubscriber(t *testing.T) {
 			ConsumerGroup: "test-consumer-group",
 		},
 		rc,
-		&DefaultMarshaler{},
+		&DefaultMarshaller{},
 		watermill.NewStdLogger(true, false),
 	)
 	require.NoError(t, err)
 	messages, err := subscriber.Subscribe(context.Background(), topic)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(ctx, rc, &DefaultMarshaler{}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
 
 	for i := 0; i < 50; i++ {
@@ -136,7 +136,7 @@ func TestFanOut(t *testing.T) {
 			ConsumerGroup: "",
 		},
 		rc,
-		&DefaultMarshaler{},
+		&DefaultMarshaller{},
 		watermill.NewStdLogger(true, false),
 	)
 	require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestFanOut(t *testing.T) {
 			ConsumerGroup: "",
 		},
 		rc,
-		&DefaultMarshaler{},
+		&DefaultMarshaller{},
 		watermill.NewStdLogger(true, false),
 	)
 	require.NoError(t, err)
@@ -161,7 +161,7 @@ func TestFanOut(t *testing.T) {
 	// wait for initial XREAD before publishing messages to avoid message loss
 	time.Sleep(2 * DefaultBlockTime)
 
-	publisher, err := NewPublisher(ctx, rc, &DefaultMarshaler{}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
 
 	for i := 0; i < 50; i++ {
