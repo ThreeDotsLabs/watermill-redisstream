@@ -153,6 +153,12 @@ func TestFanOut(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, watermill.NewStdLogger(false, false))
+	require.NoError(t, err)
+	for i := 0; i < 10; i++ {
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
+	}
+
 	messages1, err := subscriber1.Subscribe(context.Background(), topic)
 	require.NoError(t, err)
 	messages2, err := subscriber2.Subscribe(context.Background(), topic)
@@ -160,24 +166,21 @@ func TestFanOut(t *testing.T) {
 
 	// wait for initial XREAD before publishing messages to avoid message loss
 	time.Sleep(2 * DefaultBlockTime)
-
-	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, watermill.NewStdLogger(false, false))
-	require.NoError(t, err)
-
-	for i := 0; i < 50; i++ {
+	for i := 10; i < 50; i++ {
 		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
 	}
 	require.NoError(t, publisher.Close())
 
-	for i := 0; i < 50; i++ {
+	for i := 10; i < 50; i++ {
 		msg := <-messages1
 		if msg == nil {
 			t.Fatal("msg nil")
 		}
 		t.Logf("subscriber 1: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		require.Equal(t, string(msg.Payload), ("test" + strconv.Itoa(i)))
 		msg.Ack()
 	}
-	for i := 0; i < 50; i++ {
+	for i := 10; i < 50; i++ {
 		msg := <-messages2
 		if msg == nil {
 			t.Fatal("msg nil")
