@@ -10,4 +10,5 @@ require (
 	github.com/renstrom/shortuuid v3.0.0+incompatible
 	github.com/stretchr/testify v1.7.0
 	github.com/vmihailenco/msgpack v4.0.4+incompatible
+	google.golang.org/appengine v1.6.7 // indirect
 )

@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,11 +17,23 @@ import (
 )
 
 var (
-	client redis.UniversalClient
+	client      redis.UniversalClient
+	clientMutex sync.RWMutex
 )
 
 func redisClient(ctx context.Context) (redis.UniversalClient, error) {
+	clientMutex.RLock()
+	c := client
+	clientMutex.RUnlock()
+	if c != nil {
+		return c, nil
+	}
+
+	clientMutex.Lock()
+	defer clientMutex.Unlock()
+
 	if client == nil {
+		// otherwise, was set by another routine while waiting for the lock
 		client = redis.NewClient(&redis.Options{
 			Addr:         "127.0.0.1:6379",
 			DB:           0,
@@ -33,6 +46,7 @@ func redisClient(ctx context.Context) (redis.UniversalClient, error) {
 			return nil, errors.Wrap(err, "redis simple connect fail")
 		}
 	}
+
 	return client, nil
 }
 
