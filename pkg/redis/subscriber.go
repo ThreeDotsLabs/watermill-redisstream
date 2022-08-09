@@ -20,7 +20,7 @@ const (
 )
 
 const (
-	// NoSleep can be set to SubscriberConfig.NackResendSleep and SubscriberConfig.ReconnectRetrySleep
+	// NoSleep can be set to SubscriberConfig.NackResendSleep
 	NoSleep time.Duration = -1
 
 	// Block to wait next redis stream message
