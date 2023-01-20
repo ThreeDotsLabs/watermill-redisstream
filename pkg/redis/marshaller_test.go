@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultMarshaler_MarshalUnmarshal(t *testing.T) {
+func TestDefaultMarshaller_MarshalUnmarshal(t *testing.T) {
 	m := DefaultMarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
@@ -26,7 +26,7 @@ func TestDefaultMarshaler_MarshalUnmarshal(t *testing.T) {
 	assert.True(t, msg.Equals(unmarshaledMsg))
 }
 
-func BenchmarkDefaultMarshaler_Marshal(b *testing.B) {
+func BenchmarkDefaultMarshaller_Marshal(b *testing.B) {
 	m := DefaultMarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
@@ -37,7 +37,7 @@ func BenchmarkDefaultMarshaler_Marshal(b *testing.B) {
 	}
 }
 
-func BenchmarkDefaultMarshaler_Unmarshal(b *testing.B) {
+func BenchmarkDefaultMarshaller_Unmarshal(b *testing.B) {
 	m := DefaultMarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))

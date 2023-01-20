@@ -385,7 +385,7 @@ func (s *Subscriber) createMessageHandler(output chan *message.Message) messageH
 		outputChannel:   output,
 		rc:              s.rc,
 		consumerGroup:   s.config.ConsumerGroup,
-		unmarshaler:     s.unmarshaller,
+		unmarshaller:    s.unmarshaller,
 		nackResendSleep: s.config.NackResendSleep,
 		logger:          s.logger,
 		closing:         s.closing,
@@ -410,7 +410,7 @@ type messageHandler struct {
 	outputChannel chan<- *message.Message
 	rc            redis.UniversalClient
 	consumerGroup string
-	unmarshaler   Unmarshaller
+	unmarshaller  Unmarshaller
 
 	nackResendSleep time.Duration
 
@@ -425,7 +425,7 @@ func (h *messageHandler) processMessage(ctx context.Context, stream string, xm *
 
 	h.logger.Trace("Received message from redis stream", receivedMsgLogFields)
 
-	msg, err := h.unmarshaler.Unmarshal(xm.Values)
+	msg, err := h.unmarshaller.Unmarshal(xm.Values)
 	if err != nil {
 		return errors.Wrapf(err, "message unmarshal failed")
 	}

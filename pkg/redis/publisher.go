@@ -45,6 +45,7 @@ type PublisherConfig struct {
 func (sc *PublisherConfig) Validate() error {
 	for topic, maxlen := range sc.Maxlens {
 		if maxlen < 0 {
+			// zero maxlen stream indicates unlimited stream length
 			sc.Maxlens[topic] = 0
 		}
 	}
