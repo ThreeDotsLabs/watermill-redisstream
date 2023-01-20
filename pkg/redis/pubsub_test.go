@@ -50,17 +50,17 @@ func redisClient(ctx context.Context) (redis.UniversalClient, error) {
 	return client, nil
 }
 
-func newPubSub(t *testing.T, marshaler MarshalerUnmarshaler, subConfig *SubscriberConfig) (message.Publisher, message.Subscriber) {
+func newPubSub(t *testing.T, marshaller MarshallerUnmarshaller, subConfig *SubscriberConfig) (message.Publisher, message.Subscriber) {
 	logger := watermill.NewStdLogger(true, true)
 
 	ctx := context.Background()
 	rc, err := redisClient(ctx)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, marshaler, logger)
+	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, marshaller, logger)
 	require.NoError(t, err)
 
-	subscriber, err := NewSubscriber(ctx, *subConfig, rc, marshaler, logger)
+	subscriber, err := NewSubscriber(ctx, *subConfig, rc, marshaller, logger)
 	require.NoError(t, err)
 
 	return publisher, subscriber

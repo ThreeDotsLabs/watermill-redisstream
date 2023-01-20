@@ -16,7 +16,7 @@ type Unmarshaller interface {
 	Unmarshal(values map[string]interface{}) (msg *message.Message, err error)
 }
 
-type MarshalerUnmarshaler interface {
+type MarshallerUnmarshaller interface {
 	Marshaller
 	Unmarshaller
 }
