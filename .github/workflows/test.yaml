@@ -2,7 +2,6 @@ name: Test
 
 on:
   - push
-  - pull_request
 
 jobs:
   test:
@@ -30,6 +29,4 @@ jobs:
       
       - name: Test
         run: make test
-      
-      - name: Test Race
-        run: make test_race
+

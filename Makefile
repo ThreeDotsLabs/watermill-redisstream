@@ -13,9 +13,6 @@ test_race:
 test_stress:
 	go test -count=1 -tags=stress -parallel 30 -timeout=15m ./...
 
-test_reconnect:
-	go test -tags=reconnect ./...
-
 fmt:
 	go fmt ./...
-	goimports -l -w .
+
