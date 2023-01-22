@@ -7,7 +7,6 @@ import (
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/pubsub/tests"
-	"github.com/renstrom/shortuuid"
 )
 
 func BenchmarkSubscriber(b *testing.B) {
@@ -28,8 +27,8 @@ func BenchmarkSubscriber(b *testing.B) {
 		subscriber, err := NewSubscriber(
 			ctx,
 			SubscriberConfig{
-				Consumer:      shortuuid.New(),
-				ConsumerGroup: shortuuid.New(),
+				Consumer:      watermill.NewShortUUID(),
+				ConsumerGroup: watermill.NewShortUUID(),
 			},
 			rc,
 			&DefaultMarshaller{},

@@ -12,7 +12,6 @@ import (
 	"github.com/ThreeDotsLabs/watermill/pubsub/tests"
 	"github.com/go-redis/redis/v9"
 	"github.com/pkg/errors"
-	"github.com/renstrom/shortuuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,12 +66,12 @@ func newPubSub(t *testing.T, marshaller MarshallerUnmarshaller, subConfig *Subsc
 }
 
 func createPubSub(t *testing.T) (message.Publisher, message.Subscriber) {
-	return createPubSubWithConsumerGroup(t, shortuuid.New())
+	return createPubSubWithConsumerGroup(t, watermill.NewShortUUID())
 }
 
 func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.Publisher, message.Subscriber) {
 	return newPubSub(t, &DefaultMarshaller{}, &SubscriberConfig{
-		Consumer:      shortuuid.New(),
+		Consumer:      watermill.NewShortUUID(),
 		ConsumerGroup: consumerGroup,
 	})
 }
@@ -106,7 +105,7 @@ func TestSubscriber(t *testing.T) {
 	subscriber, err := NewSubscriber(
 		ctx,
 		SubscriberConfig{
-			Consumer:      shortuuid.New(),
+			Consumer:      watermill.NewShortUUID(),
 			ConsumerGroup: "test-consumer-group",
 		},
 		rc,
@@ -121,7 +120,7 @@ func TestSubscriber(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 0; i < 50; i++ {
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
 	}
 	require.NoError(t, publisher.Close())
 
@@ -146,7 +145,7 @@ func TestFanOut(t *testing.T) {
 	subscriber1, err := NewSubscriber(
 		ctx,
 		SubscriberConfig{
-			Consumer:      shortuuid.New(),
+			Consumer:      watermill.NewShortUUID(),
 			ConsumerGroup: "",
 		},
 		rc,
@@ -158,7 +157,7 @@ func TestFanOut(t *testing.T) {
 	subscriber2, err := NewSubscriber(
 		ctx,
 		SubscriberConfig{
-			Consumer:      shortuuid.New(),
+			Consumer:      watermill.NewShortUUID(),
 			ConsumerGroup: "",
 		},
 		rc,
@@ -170,7 +169,7 @@ func TestFanOut(t *testing.T) {
 	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
 	}
 
 	messages1, err := subscriber1.Subscribe(context.Background(), topic)
@@ -181,7 +180,7 @@ func TestFanOut(t *testing.T) {
 	// wait for initial XREAD before publishing messages to avoid message loss
 	time.Sleep(2 * DefaultBlockTime)
 	for i := 10; i < 50; i++ {
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
 	}
 	require.NoError(t, publisher.Close())
 

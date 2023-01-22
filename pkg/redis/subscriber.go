@@ -10,7 +10,6 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/go-redis/redis/v9"
 	"github.com/pkg/errors"
-	"github.com/renstrom/shortuuid"
 )
 
 const (
@@ -89,7 +88,7 @@ type SubscriberConfig struct {
 
 func (sc *SubscriberConfig) Validate() error {
 	if sc.Consumer == "" {
-		sc.Consumer = shortuuid.New()
+		sc.Consumer = watermill.NewShortUUID()
 	}
 	if sc.NackResendSleep == 0 {
 		sc.NackResendSleep = NoSleep
@@ -111,7 +110,7 @@ func (s *Subscriber) Subscribe(ctx context.Context, topic string) (<-chan *messa
 		"provider":       "redis-stream",
 		"topic":          topic,
 		"consumer_group": s.config.ConsumerGroup,
-		"consumer_uuid":  shortuuid.New(),
+		"consumer_uuid":  watermill.NewShortUUID(),
 	}
 	s.logger.Info("Subscribing to redis stream topic", logFields)
 
