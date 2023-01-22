@@ -8,7 +8,7 @@ import (
 	"github.com/Rican7/retry"
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
-	"github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis/v9"
 	"github.com/pkg/errors"
 	"github.com/renstrom/shortuuid"
 )
