@@ -36,7 +36,13 @@ func newPubSub(t *testing.T, subConfig *SubscriberConfig) (message.Publisher, me
 	pubClient, err := redisClient()
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, logger)
+	publisher, err := NewPublisher(
+		PublisherConfig{
+			Client:     pubClient,
+			Marshaller: &DefaultMarshallerUnmarshaller{},
+		},
+		watermill.NewStdLogger(false, false),
+	)
 	require.NoError(t, err)
 
 	subscriber, err := NewSubscriber(*subConfig, logger)
@@ -96,7 +102,13 @@ func TestSubscriber(t *testing.T) {
 	messages, err := subscriber.Subscribe(context.Background(), topic)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(
+		PublisherConfig{
+			Client:     pubClient,
+			Marshaller: &DefaultMarshallerUnmarshaller{},
+		},
+		watermill.NewStdLogger(false, false),
+	)
 	require.NoError(t, err)
 
 	for i := 0; i < 50; i++ {
@@ -148,7 +160,13 @@ func TestFanOut(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: fanOutPubClient}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(
+		PublisherConfig{
+			Client:     fanOutPubClient,
+			Marshaller: &DefaultMarshallerUnmarshaller{},
+		},
+		watermill.NewStdLogger(false, false),
+	)
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
