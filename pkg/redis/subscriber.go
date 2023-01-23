@@ -265,7 +265,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 					&redis.XReadArgs{
 						Streams: []string{stream, fanOutStartid},
 						Count:   countFanOut,
-						Block:   DefaultBlockTime,
+						Block:   s.config.BlockTime,
 					}).Result()
 			}
 			if err == redis.Nil {
@@ -281,7 +281,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			if s.config.ConsumerGroup == "" {
 				fanOutStartid = xs.Messages[0].ID
 				countFanOut = 1
-				blockTime = DefaultBlockTime
+				blockTime = s.config.BlockTime
 			}
 			select {
 			case <-s.closing:
@@ -305,7 +305,7 @@ func (s *Subscriber) claim(ctx context.Context, stream string, readChannel chan<
 		err         error
 		xp          redis.XPendingExt
 		xm          []redis.XMessage
-		tick        = time.NewTicker(DefaultClaimInterval)
+		tick        = time.NewTicker(s.config.ClaimInterval)
 		initCh      = make(chan byte, 1)
 	)
 	defer func() {
