@@ -3,51 +3,30 @@ package redis
 import (
 	"context"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
+	"github.com/ThreeDotsLabs/watermill/pubsub/tests"
 
 	"github.com/go-redis/redis/v9"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	client      redis.UniversalClient
-	clientMutex sync.RWMutex
-)
-
 func redisClient() (redis.UniversalClient, error) {
-	ctx := context.Background()
-
-	clientMutex.RLock()
-	c := client
-	clientMutex.RUnlock()
-	if c != nil {
-		return c, nil
+	client := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:6379",
+		DB:           0,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		MinIdleConns: 10,
+	})
+	err := client.Ping(context.Background()).Err()
+	if err != nil {
+		return nil, errors.Wrap(err, "redis simple connect fail")
 	}
-
-	clientMutex.Lock()
-	defer clientMutex.Unlock()
-
-	if client == nil {
-		// otherwise, was set by another routine while waiting for the lock
-		client = redis.NewClient(&redis.Options{
-			Addr:         "127.0.0.1:6379",
-			DB:           0,
-			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
-			MinIdleConns: 10,
-		})
-		err := client.Ping(ctx).Err()
-		if err != nil {
-			return nil, errors.Wrap(err, "redis simple connect fail")
-		}
-	}
-
 	return client, nil
 }
 
@@ -82,29 +61,31 @@ func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.
 	})
 }
 
-// func TestPublishSubscribe(t *testing.T) {
-// 	features := tests.Features{
-// 		ConsumerGroups:                      true,
-// 		ExactlyOnceDelivery:                 false,
-// 		GuaranteedOrder:                     false,
-// 		GuaranteedOrderWithSingleSubscriber: true,
-// 		Persistent:                          true,
-// 		RequireSingleInstance:               false,
-// 		NewSubscriberReceivesOldMessages:    true,
-// 	}
+func TestPublishSubscribe(t *testing.T) {
+	features := tests.Features{
+		ConsumerGroups:                      true,
+		ExactlyOnceDelivery:                 false,
+		GuaranteedOrder:                     false,
+		GuaranteedOrderWithSingleSubscriber: true,
+		Persistent:                          true,
+		RequireSingleInstance:               false,
+		NewSubscriberReceivesOldMessages:    true,
+	}
 
-// 	tests.TestPubSub(t, features, createPubSub, createPubSubWithConsumerGroup)
-// }
+	tests.TestPubSub(t, features, createPubSub, createPubSubWithConsumerGroup)
+}
 
 func TestSubscriber(t *testing.T) {
 	topic := "test-topic-subscriber"
 
-	rc, err := redisClient()
+	pubClient, err := redisClient()
+	require.NoError(t, err)
+	subClient, err := redisClient()
 	require.NoError(t, err)
 
 	subscriber, err := NewSubscriber(
 		SubscriberConfig{
-			Client:        rc,
+			Client:        subClient,
 			Unmarshaller:  &DefaultMarshallerUnmarshaller{},
 			Consumer:      "test-consumer",
 			ConsumerGroup: "test-consumer-group",
@@ -115,7 +96,7 @@ func TestSubscriber(t *testing.T) {
 	messages, err := subscriber.Subscribe(context.Background(), topic)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: rc}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
 
 	for i := 0; i < 50; i++ {
@@ -137,12 +118,17 @@ func TestSubscriber(t *testing.T) {
 
 func TestFanOut(t *testing.T) {
 	topic := "test-topic-fanout"
-	rc, err := redisClient()
+
+	fanOutPubClient, err := redisClient()
+	require.NoError(t, err)
+	fanOutSubClient1, err := redisClient()
+	require.NoError(t, err)
+	fanOutSubClient2, err := redisClient()
 	require.NoError(t, err)
 
 	subscriber1, err := NewSubscriber(
 		SubscriberConfig{
-			Client:        rc,
+			Client:        fanOutSubClient1,
 			Unmarshaller:  &DefaultMarshallerUnmarshaller{},
 			Consumer:      watermill.NewShortUUID(),
 			ConsumerGroup: "",
@@ -153,7 +139,7 @@ func TestFanOut(t *testing.T) {
 
 	subscriber2, err := NewSubscriber(
 		SubscriberConfig{
-			Client:        rc,
+			Client:        fanOutSubClient2,
 			Unmarshaller:  &DefaultMarshallerUnmarshaller{},
 			Consumer:      watermill.NewShortUUID(),
 			ConsumerGroup: "",
@@ -162,7 +148,7 @@ func TestFanOut(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: rc}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(PublisherConfig{Client: fanOutPubClient}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
