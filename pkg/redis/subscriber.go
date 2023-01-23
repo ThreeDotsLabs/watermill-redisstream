@@ -57,13 +57,6 @@ func NewSubscriber(config SubscriberConfig, logger watermill.LoggerAdapter) (*Su
 	}, nil
 }
 
-func DefaultSubscriberConfig() SubscriberConfig {
-	return SubscriberConfig{
-		NackResendSleep: NoSleep,
-		MaxIdleTime:     DefaultMaxIdleTime,
-	}
-}
-
 type SubscriberConfig struct {
 	Client redis.UniversalClient
 
