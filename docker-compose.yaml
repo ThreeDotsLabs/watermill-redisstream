@@ -1,0 +1,10 @@
+# for Watermill development purposes.
+# For Watermill based application docker please check https://watermill.io/docs/getting-started/
+
+version: '3'
+services:
+  redis:
+    image: redis:7.0.8
+    ports:
+      - 6379:6379
+    restart: unless-stopped

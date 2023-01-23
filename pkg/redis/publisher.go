@@ -2,26 +2,22 @@ package redis
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
-	"github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis/v9"
 	"github.com/pkg/errors"
 )
 
 type Publisher struct {
-	ctx        context.Context
-	config     PublisherConfig
-	rc         redis.UniversalClient
-	marshaller Marshaller
-
+	config PublisherConfig
 	logger watermill.LoggerAdapter
-
 	closed bool
 }
 
 // NewPublisher creates a new redis stream Publisher.
-func NewPublisher(ctx context.Context, config PublisherConfig, rc redis.UniversalClient, marshaller Marshaller, logger watermill.LoggerAdapter) (message.Publisher, error) {
+func NewPublisher(config PublisherConfig, logger watermill.LoggerAdapter) (*Publisher, error) {
 	if logger == nil {
 		logger = &watermill.NopLogger{}
 	}
@@ -29,20 +25,25 @@ func NewPublisher(ctx context.Context, config PublisherConfig, rc redis.Universa
 		return nil, err
 	}
 	return &Publisher{
-		ctx:        ctx,
-		config:     config,
-		rc:         rc,
-		marshaller: marshaller,
-		logger:     logger,
-		closed:     false,
+		config: config,
+		logger: logger,
+		closed: false,
 	}, nil
 }
 
 type PublisherConfig struct {
-	Maxlens map[string]int64
+	Client     redis.UniversalClient
+	Marshaller Marshaller
+	Maxlens    map[string]int64
 }
 
 func (sc *PublisherConfig) Validate() error {
+	if sc.Client == nil {
+		return fmt.Errorf("redis client is empty")
+	}
+	if sc.Marshaller == nil {
+		sc.Marshaller = DefaultMarshallerUnmarshaller{}
+	}
 	for topic, maxlen := range sc.Maxlens {
 		if maxlen < 0 {
 			// zero maxlen stream indicates unlimited stream length
@@ -68,7 +69,7 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 		logFields["message_uuid"] = msg.UUID
 		p.logger.Trace("Sending message to redis stream", logFields)
 
-		values, err := p.marshaller.Marshal(topic, msg)
+		values, err := p.config.Marshaller.Marshal(topic, msg)
 		if err != nil {
 			return errors.Wrapf(err, "cannot marshal message %s", msg.UUID)
 		}
@@ -78,7 +79,7 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 			maxlen = 0
 		}
 
-		id, err := p.rc.XAdd(context.Background(), &redis.XAddArgs{
+		id, err := p.config.Client.XAdd(context.Background(), &redis.XAddArgs{
 			Stream: topic,
 			Values: values,
 			MaxLen: maxlen,
@@ -97,6 +98,5 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 
 func (p *Publisher) Close() error {
 	p.closed = true
-	// do not close redis client here
-	return nil
+	return p.config.Client.Close()
 }
