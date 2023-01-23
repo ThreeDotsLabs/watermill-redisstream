@@ -1,18 +1,34 @@
+up:
+	docker-compose up -d
+
 test:
-	go test -count=1 -parallel 20 ./...
+	go test ./...
 
 test_v:
-	go test -count=1 -parallel 20 -v ./...
+	go test -v ./...
 
 test_short:
-	go test -count=1 -parallel 20 ./... -short
+	go test ./... -short
 
 test_race:
-	go test ./... -count=1 -race
+	go test ./... -short -race
 
 test_stress:
-	go test -count=1 -tags=stress -parallel 30 -timeout=15m ./...
+	go test -v -tags=stress -timeout=15m ./...
 
 fmt:
 	go fmt ./...
+	goimports -l -w .
 
+build:
+	go build ./...
+
+wait:
+	go run github.com/ThreeDotsLabs/wait-for@latest localhost:6379
+
+update_watermill:
+	go get -u github.com/ThreeDotsLabs/watermill
+	go mod tidy
+
+	sed -i '\|go 1\.|d' go.mod
+	go mod edit -fmt

@@ -2,15 +2,15 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/Rican7/retry"
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
-	"github.com/go-redis/redis/v8"
+	"github.com/go-redis/redis/v9"
 	"github.com/pkg/errors"
-	"github.com/renstrom/shortuuid"
 )
 
 const (
@@ -23,10 +23,8 @@ const (
 	// NoSleep can be set to SubscriberConfig.NackResendSleep
 	NoSleep time.Duration = -1
 
-	// Block to wait next redis stream message
 	DefaultBlockTime time.Duration = time.Millisecond * 100
 
-	// Claim idle pending message every 5 seconds
 	DefaultClaimInterval time.Duration = time.Second * 5
 
 	// Default max idle time for pending message.
@@ -35,21 +33,17 @@ const (
 )
 
 type Subscriber struct {
-	ctx    context.Context
-	config SubscriberConfig
-	rc     redis.UniversalClient
-
-	unmarshaller Unmarshaller
-	logger       watermill.LoggerAdapter
-
+	config        SubscriberConfig
+	logger        watermill.LoggerAdapter
 	closing       chan struct{}
 	subscribersWg sync.WaitGroup
 
-	closed bool
+	closed     bool
+	closeMutex sync.Mutex
 }
 
 // NewSubscriber creates a new redis stream Subscriber
-func NewSubscriber(ctx context.Context, config SubscriberConfig, rc redis.UniversalClient, unmarshaller Unmarshaller, logger watermill.LoggerAdapter) (message.Subscriber, error) {
+func NewSubscriber(config SubscriberConfig, logger watermill.LoggerAdapter) (*Subscriber, error) {
 	if logger == nil {
 		logger = &watermill.NopLogger{}
 	}
@@ -57,12 +51,9 @@ func NewSubscriber(ctx context.Context, config SubscriberConfig, rc redis.Univer
 		return nil, err
 	}
 	return &Subscriber{
-		ctx:          ctx,
-		config:       config,
-		rc:           rc,
-		unmarshaller: unmarshaller,
-		logger:       logger,
-		closing:      make(chan struct{}),
+		config:  config,
+		logger:  logger,
+		closing: make(chan struct{}),
 	}, nil
 }
 
@@ -74,8 +65,11 @@ func DefaultSubscriberConfig() SubscriberConfig {
 }
 
 type SubscriberConfig struct {
-	// Redis stream consumer id
-	// Pair with ConsumerGroup
+	Client redis.UniversalClient
+
+	Unmarshaller Unmarshaller
+
+	// Redis stream consumer id, paired with ConsumerGroup
 	Consumer string
 	// When empty, fan-out mode will be used
 	ConsumerGroup string
@@ -83,18 +77,36 @@ type SubscriberConfig struct {
 	// How long after Nack message should be redelivered
 	NackResendSleep time.Duration
 
+	// Block to wait next redis stream message
+	BlockTime time.Duration
+
+	// Claim idle pending message interval
+	ClaimInterval time.Duration
+
 	// How long should we treat a consumer as offline
 	MaxIdleTime time.Duration
 }
 
 func (sc *SubscriberConfig) Validate() error {
+	if sc.Client == nil {
+		return fmt.Errorf("redis client is empty")
+	}
+	if sc.Unmarshaller == nil {
+		sc.Unmarshaller = DefaultMarshallerUnmarshaller{}
+	}
 	if sc.Consumer == "" {
-		sc.Consumer = shortuuid.New()
+		sc.Consumer = watermill.NewShortUUID()
 	}
 	if sc.NackResendSleep == 0 {
 		sc.NackResendSleep = NoSleep
 	}
-	if sc.MaxIdleTime < 1 {
+	if sc.BlockTime == 0 {
+		sc.BlockTime = DefaultBlockTime
+	}
+	if sc.ClaimInterval == 0 {
+		sc.ClaimInterval = DefaultClaimInterval
+	}
+	if sc.MaxIdleTime == 0 {
 		sc.MaxIdleTime = DefaultMaxIdleTime
 	}
 	return nil
@@ -108,15 +120,15 @@ func (s *Subscriber) Subscribe(ctx context.Context, topic string) (<-chan *messa
 	s.subscribersWg.Add(1)
 
 	logFields := watermill.LogFields{
-		"provider":       "redis-stream",
+		"provider":       "redis",
 		"topic":          topic,
 		"consumer_group": s.config.ConsumerGroup,
-		"consumer_uuid":  shortuuid.New(),
+		"consumer_uuid":  s.config.Consumer,
 	}
 	s.logger.Info("Subscribing to redis stream topic", logFields)
 
 	// we don't want to have buffered channel to not consume messsage from redis stream when consumer is not consuming
-	output := make(chan *message.Message, 0)
+	output := make(chan *message.Message)
 
 	consumeClosed, err := s.consumeMessages(ctx, topic, output, logFields)
 	if err != nil {
@@ -148,7 +160,7 @@ func (s *Subscriber) consumeMessages(ctx context.Context, topic string, output c
 	}()
 	if s.config.ConsumerGroup != "" {
 		// create consumer group
-		if _, err := s.rc.XGroupCreateMkStream(s.ctx, topic, s.config.ConsumerGroup, oldestId).Result(); err != nil && err.Error() != redisBusyGroup {
+		if _, err := s.config.Client.XGroupCreateMkStream(ctx, topic, s.config.ConsumerGroup, oldestId).Result(); err != nil && err.Error() != redisBusyGroup {
 			return nil, err
 		}
 	}
@@ -168,7 +180,7 @@ func (s *Subscriber) consumeMessages(ctx context.Context, topic string, output c
 
 func (s *Subscriber) consumeStreams(ctx context.Context, stream string, output chan *message.Message, logFields watermill.LogFields) (chan struct{}, error) {
 	messageHandler := s.createMessageHandler(output)
-	consumeMessageClosed := make(chan struct{}, 0)
+	consumeMessageClosed := make(chan struct{})
 
 	go func() {
 		defer close(consumeMessageClosed)
@@ -238,8 +250,8 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			return
 		default:
 			if s.config.ConsumerGroup != "" {
-				xss, err = s.rc.XReadGroup(
-					s.ctx,
+				xss, err = s.config.Client.XReadGroup(
+					ctx,
 					&redis.XReadGroupArgs{
 						Group:    s.config.ConsumerGroup,
 						Consumer: s.config.Consumer,
@@ -248,8 +260,8 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 						Block:    blockTime,
 					}).Result()
 			} else {
-				xss, err = s.rc.XRead(
-					s.ctx,
+				xss, err = s.config.Client.XRead(
+					ctx,
 					&redis.XReadArgs{
 						Streams: []string{stream, fanOutStartid},
 						Count:   countFanOut,
@@ -314,7 +326,7 @@ OUTER_LOOP:
 		case <-tick.C:
 		case <-initCh:
 		}
-		xps, err = s.rc.XPendingExt(s.ctx, &redis.XPendingExtArgs{
+		xps, err = s.config.Client.XPendingExt(ctx, &redis.XPendingExtArgs{
 			Stream: stream,
 			Group:  s.config.ConsumerGroup,
 			Start:  start,
@@ -336,7 +348,7 @@ OUTER_LOOP:
 
 			if xp.Idle >= s.config.MaxIdleTime {
 				// assign the ownership of a pending message to the current consumer
-				xm, err = s.rc.XClaim(s.ctx, &redis.XClaimArgs{
+				xm, err = s.config.Client.XClaim(ctx, &redis.XClaimArgs{
 					Stream:   stream,
 					Group:    s.config.ConsumerGroup,
 					Consumer: s.config.Consumer,
@@ -352,7 +364,7 @@ OUTER_LOOP:
 					continue OUTER_LOOP
 				}
 				// delete idle consumer
-				if err = s.rc.XGroupDelConsumer(s.ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
+				if err = s.config.Client.XGroupDelConsumer(ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
 					s.logger.Error(
 						"xgroupdelconsumer fail",
 						err,
@@ -383,9 +395,9 @@ OUTER_LOOP:
 func (s *Subscriber) createMessageHandler(output chan *message.Message) messageHandler {
 	return messageHandler{
 		outputChannel:   output,
-		rc:              s.rc,
+		rc:              s.config.Client,
 		consumerGroup:   s.config.ConsumerGroup,
-		unmarshaller:    s.unmarshaller,
+		unmarshaller:    s.config.Unmarshaller,
 		nackResendSleep: s.config.NackResendSleep,
 		logger:          s.logger,
 		closing:         s.closing,
@@ -393,6 +405,9 @@ func (s *Subscriber) createMessageHandler(output chan *message.Message) messageH
 }
 
 func (s *Subscriber) Close() error {
+	s.closeMutex.Lock()
+	defer s.closeMutex.Unlock()
+
 	if s.closed {
 		return nil
 	}
@@ -444,7 +459,7 @@ ResendLoop:
 	for {
 		select {
 		case h.outputChannel <- msg:
-			h.logger.Trace("Messgae sent to consumer", receivedMsgLogFields)
+			h.logger.Trace("Message sent to consumer", receivedMsgLogFields)
 		case <-h.closing:
 			h.logger.Trace("Closing, message discarded", receivedMsgLogFields)
 			return nil

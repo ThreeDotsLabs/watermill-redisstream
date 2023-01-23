@@ -3,76 +3,60 @@ package redis
 import (
 	"context"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/pubsub/tests"
-	"github.com/go-redis/redis/v8"
+
+	"github.com/go-redis/redis/v9"
 	"github.com/pkg/errors"
-	"github.com/renstrom/shortuuid"
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	client      redis.UniversalClient
-	clientMutex sync.RWMutex
-)
-
-func redisClient(ctx context.Context) (redis.UniversalClient, error) {
-	clientMutex.RLock()
-	c := client
-	clientMutex.RUnlock()
-	if c != nil {
-		return c, nil
+func redisClient() (redis.UniversalClient, error) {
+	client := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:6379",
+		DB:           0,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		MinIdleConns: 10,
+	})
+	err := client.Ping(context.Background()).Err()
+	if err != nil {
+		return nil, errors.Wrap(err, "redis simple connect fail")
 	}
-
-	clientMutex.Lock()
-	defer clientMutex.Unlock()
-
-	if client == nil {
-		// otherwise, was set by another routine while waiting for the lock
-		client = redis.NewClient(&redis.Options{
-			Addr:         "127.0.0.1:6379",
-			DB:           0,
-			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
-			MinIdleConns: 10,
-		})
-		err := client.Ping(ctx).Err()
-		if err != nil {
-			return nil, errors.Wrap(err, "redis simple connect fail")
-		}
-	}
-
 	return client, nil
 }
 
-func newPubSub(t *testing.T, marshaller MarshallerUnmarshaller, subConfig *SubscriberConfig) (message.Publisher, message.Subscriber) {
+func newPubSub(t *testing.T, subConfig *SubscriberConfig) (message.Publisher, message.Subscriber) {
 	logger := watermill.NewStdLogger(true, true)
 
-	ctx := context.Background()
-	rc, err := redisClient(ctx)
+	pubClient, err := redisClient()
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, marshaller, logger)
+	publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, logger)
 	require.NoError(t, err)
 
-	subscriber, err := NewSubscriber(ctx, *subConfig, rc, marshaller, logger)
+	subscriber, err := NewSubscriber(*subConfig, logger)
 	require.NoError(t, err)
 
 	return publisher, subscriber
 }
 
 func createPubSub(t *testing.T) (message.Publisher, message.Subscriber) {
-	return createPubSubWithConsumerGroup(t, shortuuid.New())
+	return createPubSubWithConsumerGroup(t, watermill.NewShortUUID())
 }
 
 func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.Publisher, message.Subscriber) {
-	return newPubSub(t, &DefaultMarshaller{}, &SubscriberConfig{
-		Consumer:      shortuuid.New(),
+	subClient, err := redisClient()
+	require.NoError(t, err)
+
+	return newPubSub(t, &SubscriberConfig{
+		Client:        subClient,
+		Unmarshaller:  &DefaultMarshallerUnmarshaller{},
+		Consumer:      watermill.NewShortUUID(),
 		ConsumerGroup: consumerGroup,
 	})
 }
@@ -84,44 +68,39 @@ func TestPublishSubscribe(t *testing.T) {
 		GuaranteedOrder:                     false,
 		GuaranteedOrderWithSingleSubscriber: true,
 		Persistent:                          true,
-		//RestartServiceCommand: []string{
-		//	`docker`,
-		//	`restart`,
-		//	`redis-simple`,
-		//},
-		RequireSingleInstance:            false,
-		NewSubscriberReceivesOldMessages: true,
+		RequireSingleInstance:               false,
+		NewSubscriberReceivesOldMessages:    true,
 	}
 
 	tests.TestPubSub(t, features, createPubSub, createPubSubWithConsumerGroup)
 }
 
 func TestSubscriber(t *testing.T) {
-
 	topic := "test-topic-subscriber"
-	ctx := context.Background()
-	rc, err := redisClient(ctx)
+
+	pubClient, err := redisClient()
+	require.NoError(t, err)
+	subClient, err := redisClient()
 	require.NoError(t, err)
 
 	subscriber, err := NewSubscriber(
-		ctx,
 		SubscriberConfig{
-			Consumer:      shortuuid.New(),
+			Client:        subClient,
+			Unmarshaller:  &DefaultMarshallerUnmarshaller{},
+			Consumer:      "test-consumer",
 			ConsumerGroup: "test-consumer-group",
 		},
-		rc,
-		&DefaultMarshaller{},
 		watermill.NewStdLogger(true, false),
 	)
 	require.NoError(t, err)
 	messages, err := subscriber.Subscribe(context.Background(), topic)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
 
 	for i := 0; i < 50; i++ {
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
 	}
 	require.NoError(t, publisher.Close())
 
@@ -139,38 +118,40 @@ func TestSubscriber(t *testing.T) {
 
 func TestFanOut(t *testing.T) {
 	topic := "test-topic-fanout"
-	ctx := context.Background()
-	rc, err := redisClient(ctx)
+
+	fanOutPubClient, err := redisClient()
+	require.NoError(t, err)
+	fanOutSubClient1, err := redisClient()
+	require.NoError(t, err)
+	fanOutSubClient2, err := redisClient()
 	require.NoError(t, err)
 
 	subscriber1, err := NewSubscriber(
-		ctx,
 		SubscriberConfig{
-			Consumer:      shortuuid.New(),
+			Client:        fanOutSubClient1,
+			Unmarshaller:  &DefaultMarshallerUnmarshaller{},
+			Consumer:      watermill.NewShortUUID(),
 			ConsumerGroup: "",
 		},
-		rc,
-		&DefaultMarshaller{},
 		watermill.NewStdLogger(true, false),
 	)
 	require.NoError(t, err)
 
 	subscriber2, err := NewSubscriber(
-		ctx,
 		SubscriberConfig{
-			Consumer:      shortuuid.New(),
+			Client:        fanOutSubClient2,
+			Unmarshaller:  &DefaultMarshallerUnmarshaller{},
+			Consumer:      watermill.NewShortUUID(),
 			ConsumerGroup: "",
 		},
-		rc,
-		&DefaultMarshaller{},
 		watermill.NewStdLogger(true, false),
 	)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(PublisherConfig{Client: fanOutPubClient}, watermill.NewStdLogger(false, false))
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
 	}
 
 	messages1, err := subscriber1.Subscribe(context.Background(), topic)
@@ -181,7 +162,7 @@ func TestFanOut(t *testing.T) {
 	// wait for initial XREAD before publishing messages to avoid message loss
 	time.Sleep(2 * DefaultBlockTime)
 	for i := 10; i < 50; i++ {
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(shortuuid.New(), []byte("test"+strconv.Itoa(i)))))
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
 	}
 	require.NoError(t, publisher.Close())
 

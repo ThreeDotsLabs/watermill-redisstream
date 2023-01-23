@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDefaultMarshaller_MarshalUnmarshal(t *testing.T) {
-	m := DefaultMarshaller{}
+func TestDefaultMarshallerUnmarshaller_MarshalUnmarshal(t *testing.T) {
+	m := DefaultMarshallerUnmarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
 	msg.Metadata.Set("foo", "bar")
@@ -26,19 +26,23 @@ func TestDefaultMarshaller_MarshalUnmarshal(t *testing.T) {
 	assert.True(t, msg.Equals(unmarshaledMsg))
 }
 
-func BenchmarkDefaultMarshaller_Marshal(b *testing.B) {
-	m := DefaultMarshaller{}
+func BenchmarkDefaultMarshallerUnmarshaller_Marshal(b *testing.B) {
+	m := DefaultMarshallerUnmarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
 	msg.Metadata.Set("foo", "bar")
 
+	var err error
 	for i := 0; i < b.N; i++ {
-		m.Marshal("foo", msg)
+		_, err = m.Marshal("foo", msg)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
-func BenchmarkDefaultMarshaller_Unmarshal(b *testing.B) {
-	m := DefaultMarshaller{}
+func BenchmarkDefaultMarshallerUnmarshaller_Unmarshal(b *testing.B) {
+	m := DefaultMarshallerUnmarshaller{}
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
 	msg.Metadata.Set("foo", "bar")
@@ -54,7 +58,10 @@ func BenchmarkDefaultMarshaller_Unmarshal(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		m.Unmarshal(consumedMsg)
+		_, err = m.Unmarshal(consumedMsg)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

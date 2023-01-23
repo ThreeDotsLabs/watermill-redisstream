@@ -1,38 +1,38 @@
 package redis
 
 import (
-	"context"
 	"testing"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/pubsub/tests"
-	"github.com/renstrom/shortuuid"
 )
 
 func BenchmarkSubscriber(b *testing.B) {
-
-	ctx := context.Background()
-	rc, err := redisClient(ctx)
+	pubClient, err := redisClient()
 	if err != nil {
 		b.Fatal(err)
 	}
+	subClient, err := redisClient()
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	tests.BenchSubscriber(b, func(n int) (message.Publisher, message.Subscriber) {
 		logger := watermill.NopLogger{}
 
-		publisher, err := NewPublisher(ctx, PublisherConfig{}, rc, &DefaultMarshaller{}, logger)
+		publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, logger)
 		if err != nil {
 			panic(err)
 		}
 
 		subscriber, err := NewSubscriber(
-			ctx,
 			SubscriberConfig{
-				Consumer:      shortuuid.New(),
-				ConsumerGroup: shortuuid.New(),
+				Client:        subClient,
+				Unmarshaller:  &DefaultMarshallerUnmarshaller{},
+				Consumer:      watermill.NewShortUUID(),
+				ConsumerGroup: watermill.NewShortUUID(),
 			},
-			rc,
-			&DefaultMarshaller{},
 			logger,
 		)
 		if err != nil {

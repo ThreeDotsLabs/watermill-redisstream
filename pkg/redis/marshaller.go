@@ -21,9 +21,9 @@ type MarshallerUnmarshaller interface {
 	Unmarshaller
 }
 
-type DefaultMarshaller struct{}
+type DefaultMarshallerUnmarshaller struct{}
 
-func (DefaultMarshaller) Marshal(_ string, msg *message.Message) (map[string]interface{}, error) {
+func (DefaultMarshallerUnmarshaller) Marshal(_ string, msg *message.Message) (map[string]interface{}, error) {
 	if value := msg.Metadata.Get(UUIDHeaderKey); value != "" {
 		return nil, errors.Errorf("metadata %s is reserved by watermill for message UUID", UUIDHeaderKey)
 	}
@@ -45,7 +45,7 @@ func (DefaultMarshaller) Marshal(_ string, msg *message.Message) (map[string]int
 	}, nil
 }
 
-func (DefaultMarshaller) Unmarshal(values map[string]interface{}) (msg *message.Message, err error) {
+func (DefaultMarshallerUnmarshaller) Unmarshal(values map[string]interface{}) (msg *message.Message, err error) {
 	msg = message.NewMessage(values[UUIDHeaderKey].(string), []byte(values["payload"].(string)))
 
 	md := values["metadata"]
