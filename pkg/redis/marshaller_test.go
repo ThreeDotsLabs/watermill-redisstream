@@ -32,8 +32,12 @@ func BenchmarkDefaultMarshallerUnmarshaller_Marshal(b *testing.B) {
 	msg := message.NewMessage(watermill.NewUUID(), []byte("payload"))
 	msg.Metadata.Set("foo", "bar")
 
+	var err error
 	for i := 0; i < b.N; i++ {
-		m.Marshal("foo", msg)
+		_, err = m.Marshal("foo", msg)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -54,7 +58,10 @@ func BenchmarkDefaultMarshallerUnmarshaller_Unmarshal(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		m.Unmarshal(consumedMsg)
+		_, err = m.Unmarshal(consumedMsg)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
