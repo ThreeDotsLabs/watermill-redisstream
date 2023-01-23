@@ -98,5 +98,5 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 
 func (p *Publisher) Close() error {
 	p.closed = true
-	return p.config.Client.Close()
+	return nil
 }

@@ -33,10 +33,10 @@ func redisClient() (redis.UniversalClient, error) {
 func newPubSub(t *testing.T, subConfig *SubscriberConfig) (message.Publisher, message.Subscriber) {
 	logger := watermill.NewStdLogger(true, true)
 
-	rc, err := redisClient()
+	pubClient, err := redisClient()
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: rc}, logger)
+	publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, logger)
 	require.NoError(t, err)
 
 	subscriber, err := NewSubscriber(*subConfig, logger)
@@ -50,11 +50,11 @@ func createPubSub(t *testing.T) (message.Publisher, message.Subscriber) {
 }
 
 func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.Publisher, message.Subscriber) {
-	rc, err := redisClient()
+	subClient, err := redisClient()
 	require.NoError(t, err)
 
 	return newPubSub(t, &SubscriberConfig{
-		Client:        rc,
+		Client:        subClient,
 		Unmarshaller:  &DefaultMarshallerUnmarshaller{},
 		Consumer:      watermill.NewShortUUID(),
 		ConsumerGroup: consumerGroup,

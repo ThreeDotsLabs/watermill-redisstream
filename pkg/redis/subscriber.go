@@ -459,7 +459,7 @@ ResendLoop:
 	for {
 		select {
 		case h.outputChannel <- msg:
-			h.logger.Trace("Messgae sent to consumer", receivedMsgLogFields)
+			h.logger.Trace("Message sent to consumer", receivedMsgLogFields)
 		case <-h.closing:
 			h.logger.Trace("Closing, message discarded", receivedMsgLogFields)
 			return nil
