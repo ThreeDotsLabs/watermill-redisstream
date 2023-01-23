@@ -31,7 +31,7 @@ func redisClient() (redis.UniversalClient, error) {
 }
 
 func newPubSub(t *testing.T, subConfig *SubscriberConfig) (message.Publisher, message.Subscriber) {
-	logger := watermill.NewStdLogger(true, true)
+	logger := watermill.NewStdLogger(true, false)
 
 	pubClient, err := redisClient()
 	require.NoError(t, err)
