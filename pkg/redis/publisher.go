@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -13,6 +12,7 @@ import (
 
 type Publisher struct {
 	config PublisherConfig
+	client redis.UniversalClient
 	logger watermill.LoggerAdapter
 
 	closed     bool
@@ -21,14 +21,19 @@ type Publisher struct {
 
 // NewPublisher creates a new redis stream Publisher.
 func NewPublisher(config PublisherConfig, logger watermill.LoggerAdapter) (*Publisher, error) {
-	if logger == nil {
-		logger = &watermill.NopLogger{}
-	}
+	config.setDefaults()
+
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+
+	if logger == nil {
+		logger = &watermill.NopLogger{}
+	}
+
 	return &Publisher{
 		config: config,
+		client: config.Client,
 		logger: logger,
 		closed: false,
 	}, nil
@@ -40,17 +45,20 @@ type PublisherConfig struct {
 	Maxlens    map[string]int64
 }
 
-func (sc *PublisherConfig) Validate() error {
-	if sc.Client == nil {
-		return fmt.Errorf("redis client is empty")
+func (c *PublisherConfig) setDefaults() {
+	if c.Marshaller == nil {
+		c.Marshaller = DefaultMarshallerUnmarshaller{}
 	}
-	if sc.Marshaller == nil {
-		sc.Marshaller = DefaultMarshallerUnmarshaller{}
+}
+
+func (c *PublisherConfig) Validate() error {
+	if c.Client == nil {
+		return errors.New("redis client is empty")
 	}
-	for topic, maxlen := range sc.Maxlens {
+	for topic, maxlen := range c.Maxlens {
 		if maxlen < 0 {
 			// zero maxlen stream indicates unlimited stream length
-			sc.Maxlens[topic] = 0
+			c.Maxlens[topic] = 0
 		}
 	}
 	return nil
@@ -82,7 +90,7 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 			maxlen = 0
 		}
 
-		id, err := p.config.Client.XAdd(context.Background(), &redis.XAddArgs{
+		id, err := p.client.XAdd(context.Background(), &redis.XAddArgs{
 			Stream: topic,
 			Values: values,
 			MaxLen: maxlen,
@@ -108,7 +116,7 @@ func (p *Publisher) Close() error {
 	}
 	p.closed = true
 
-	if err := p.config.Client.Close(); err != nil {
+	if err := p.client.Close(); err != nil {
 		return err
 	}
 

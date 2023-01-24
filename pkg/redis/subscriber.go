@@ -2,7 +2,6 @@ package redis
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -34,6 +33,7 @@ const (
 
 type Subscriber struct {
 	config        SubscriberConfig
+	client        redis.UniversalClient
 	logger        watermill.LoggerAdapter
 	closing       chan struct{}
 	subscribersWg sync.WaitGroup
@@ -44,14 +44,19 @@ type Subscriber struct {
 
 // NewSubscriber creates a new redis stream Subscriber
 func NewSubscriber(config SubscriberConfig, logger watermill.LoggerAdapter) (*Subscriber, error) {
-	if logger == nil {
-		logger = &watermill.NopLogger{}
-	}
+	config.setDefaults()
+
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+
+	if logger == nil {
+		logger = &watermill.NopLogger{}
+	}
+
 	return &Subscriber{
 		config:  config,
+		client:  config.Client,
 		logger:  logger,
 		closing: make(chan struct{}),
 	}, nil
@@ -80,10 +85,7 @@ type SubscriberConfig struct {
 	MaxIdleTime time.Duration
 }
 
-func (sc *SubscriberConfig) Validate() error {
-	if sc.Client == nil {
-		return fmt.Errorf("redis client is empty")
-	}
+func (sc *SubscriberConfig) setDefaults() {
 	if sc.Unmarshaller == nil {
 		sc.Unmarshaller = DefaultMarshallerUnmarshaller{}
 	}
@@ -101,6 +103,12 @@ func (sc *SubscriberConfig) Validate() error {
 	}
 	if sc.MaxIdleTime == 0 {
 		sc.MaxIdleTime = DefaultMaxIdleTime
+	}
+}
+
+func (sc *SubscriberConfig) Validate() error {
+	if sc.Client == nil {
+		return errors.New("redis client is empty")
 	}
 	return nil
 }
@@ -153,7 +161,7 @@ func (s *Subscriber) consumeMessages(ctx context.Context, topic string, output c
 	}()
 	if s.config.ConsumerGroup != "" {
 		// create consumer group
-		if _, err := s.config.Client.XGroupCreateMkStream(ctx, topic, s.config.ConsumerGroup, oldestId).Result(); err != nil && err.Error() != redisBusyGroup {
+		if _, err := s.client.XGroupCreateMkStream(ctx, topic, s.config.ConsumerGroup, oldestId).Result(); err != nil && err.Error() != redisBusyGroup {
 			return nil, err
 		}
 	}
@@ -243,7 +251,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			return
 		default:
 			if s.config.ConsumerGroup != "" {
-				xss, err = s.config.Client.XReadGroup(
+				xss, err = s.client.XReadGroup(
 					ctx,
 					&redis.XReadGroupArgs{
 						Group:    s.config.ConsumerGroup,
@@ -253,7 +261,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 						Block:    blockTime,
 					}).Result()
 			} else {
-				xss, err = s.config.Client.XRead(
+				xss, err = s.client.XRead(
 					ctx,
 					&redis.XReadArgs{
 						Streams: []string{stream, fanOutStartid},
@@ -319,7 +327,7 @@ OUTER_LOOP:
 		case <-tick.C:
 		case <-initCh:
 		}
-		xps, err = s.config.Client.XPendingExt(ctx, &redis.XPendingExtArgs{
+		xps, err = s.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 			Stream: stream,
 			Group:  s.config.ConsumerGroup,
 			Start:  start,
@@ -341,7 +349,7 @@ OUTER_LOOP:
 
 			if xp.Idle >= s.config.MaxIdleTime {
 				// assign the ownership of a pending message to the current consumer
-				xm, err = s.config.Client.XClaim(ctx, &redis.XClaimArgs{
+				xm, err = s.client.XClaim(ctx, &redis.XClaimArgs{
 					Stream:   stream,
 					Group:    s.config.ConsumerGroup,
 					Consumer: s.config.Consumer,
@@ -357,7 +365,7 @@ OUTER_LOOP:
 					continue OUTER_LOOP
 				}
 				// delete idle consumer
-				if err = s.config.Client.XGroupDelConsumer(ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
+				if err = s.client.XGroupDelConsumer(ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
 					s.logger.Error(
 						"xgroupdelconsumer fail",
 						err,
@@ -388,7 +396,7 @@ OUTER_LOOP:
 func (s *Subscriber) createMessageHandler(output chan *message.Message) messageHandler {
 	return messageHandler{
 		outputChannel:   output,
-		rc:              s.config.Client,
+		rc:              s.client,
 		consumerGroup:   s.config.ConsumerGroup,
 		unmarshaller:    s.config.Unmarshaller,
 		nackResendSleep: s.config.NackResendSleep,
@@ -409,7 +417,7 @@ func (s *Subscriber) Close() error {
 	close(s.closing)
 	s.subscribersWg.Wait()
 
-	if err := s.config.Client.Close(); err != nil {
+	if err := s.client.Close(); err != nil {
 		return err
 	}
 
