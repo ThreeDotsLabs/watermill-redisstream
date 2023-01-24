@@ -112,7 +112,10 @@ func TestSubscriber(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 0; i < 50; i++ {
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
+		uid := watermill.NewShortUUID()
+		payload := "test" + strconv.Itoa(i)
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(uid, []byte(payload))))
+		t.Logf("published msg %v; payload: %v", uid, payload)
 	}
 	require.NoError(t, publisher.Close())
 
@@ -121,7 +124,7 @@ func TestSubscriber(t *testing.T) {
 		if msg == nil {
 			t.Fatal("msg nil")
 		}
-		t.Logf("%v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		t.Logf("received msg %v; payload: %v", msg.UUID, string(msg.Payload))
 		msg.Ack()
 	}
 
@@ -199,6 +202,7 @@ func TestFanOut(t *testing.T) {
 			t.Fatal("msg nil")
 		}
 		t.Logf("subscriber 2: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		require.Equal(t, string(msg.Payload), ("test" + strconv.Itoa(i)))
 		msg.Ack()
 	}
 
