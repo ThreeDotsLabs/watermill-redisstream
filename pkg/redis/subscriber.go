@@ -409,6 +409,10 @@ func (s *Subscriber) Close() error {
 	close(s.closing)
 	s.subscribersWg.Wait()
 
+	if err := s.config.Client.Close(); err != nil {
+		return err
+	}
+
 	s.logger.Debug("Redis stream subscriber closed", nil)
 
 	return nil

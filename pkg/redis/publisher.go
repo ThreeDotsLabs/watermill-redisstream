@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
@@ -13,7 +14,9 @@ import (
 type Publisher struct {
 	config PublisherConfig
 	logger watermill.LoggerAdapter
-	closed bool
+
+	closed     bool
+	closeMutex sync.Mutex
 }
 
 // NewPublisher creates a new redis stream Publisher.
@@ -97,6 +100,17 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 }
 
 func (p *Publisher) Close() error {
+	p.closeMutex.Lock()
+	defer p.closeMutex.Unlock()
+
+	if p.closed {
+		return nil
+	}
 	p.closed = true
+
+	if err := p.config.Client.Close(); err != nil {
+		return err
+	}
+
 	return nil
 }
