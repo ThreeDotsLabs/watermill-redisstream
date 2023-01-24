@@ -82,7 +82,7 @@ func TestPublishSubscribe(t *testing.T) {
 }
 
 func TestSubscriber(t *testing.T) {
-	topic := "test-topic-subscriber"
+	topic := watermill.NewShortUUID()
 
 	pubClient, err := redisClient()
 	require.NoError(t, err)
@@ -93,8 +93,8 @@ func TestSubscriber(t *testing.T) {
 		SubscriberConfig{
 			Client:        subClient,
 			Unmarshaller:  &DefaultMarshallerUnmarshaller{},
-			Consumer:      "test-consumer",
-			ConsumerGroup: "test-consumer-group",
+			Consumer:      watermill.NewShortUUID(),
+			ConsumerGroup: watermill.NewShortUUID(),
 		},
 		watermill.NewStdLogger(true, false),
 	)
@@ -111,28 +111,30 @@ func TestSubscriber(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	var sentMsgs message.Messages
 	for i := 0; i < 50; i++ {
-		uid := watermill.NewShortUUID()
-		payload := "test" + strconv.Itoa(i)
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(uid, []byte(payload))))
-		t.Logf("published msg %v; payload: %v", uid, payload)
+		msg := message.NewMessage(watermill.NewShortUUID(), nil)
+		require.NoError(t, publisher.Publish(topic, msg))
+		sentMsgs = append(sentMsgs, msg)
 	}
-	require.NoError(t, publisher.Close())
 
+	var receivedMsgs message.Messages
 	for i := 0; i < 50; i++ {
 		msg := <-messages
 		if msg == nil {
 			t.Fatal("msg nil")
 		}
-		t.Logf("received msg %v; payload: %v", msg.UUID, string(msg.Payload))
+		receivedMsgs = append(receivedMsgs, msg)
 		msg.Ack()
 	}
+	tests.AssertAllMessagesReceived(t, sentMsgs, receivedMsgs)
 
+	require.NoError(t, publisher.Close())
 	require.NoError(t, subscriber.Close())
 }
 
 func TestFanOut(t *testing.T) {
-	topic := "test-topic-fanout"
+	topic := watermill.NewShortUUID()
 
 	fanOutPubClient, err := redisClient()
 	require.NoError(t, err)
@@ -185,7 +187,6 @@ func TestFanOut(t *testing.T) {
 	for i := 10; i < 50; i++ {
 		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
 	}
-	require.NoError(t, publisher.Close())
 
 	for i := 10; i < 50; i++ {
 		msg := <-messages1
@@ -206,6 +207,7 @@ func TestFanOut(t *testing.T) {
 		msg.Ack()
 	}
 
+	require.NoError(t, publisher.Close())
 	require.NoError(t, subscriber1.Close())
 	require.NoError(t, subscriber2.Close())
 }
