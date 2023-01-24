@@ -64,6 +64,8 @@ func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.
 		Unmarshaller:  &DefaultMarshallerUnmarshaller{},
 		Consumer:      watermill.NewShortUUID(),
 		ConsumerGroup: consumerGroup,
+		ClaimInterval: 3 * time.Second,
+		MaxIdleTime:   5 * time.Second,
 	})
 }
 
