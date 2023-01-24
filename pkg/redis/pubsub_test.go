@@ -17,11 +17,9 @@ import (
 
 func redisClient() (redis.UniversalClient, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:         "127.0.0.1:6379",
-		DB:           0,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		MinIdleConns: 10,
+		Addr:        "127.0.0.1:6379",
+		DB:          0,
+		ReadTimeout: -1,
 	})
 	err := client.Ping(context.Background()).Err()
 	if err != nil {
