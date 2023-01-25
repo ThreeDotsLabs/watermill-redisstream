@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/Rican7/retry v0.3.1
-	github.com/ThreeDotsLabs/watermill v1.2.0-rc.11
+	github.com/ThreeDotsLabs/watermill v1.2.0-rc.2
 	github.com/go-redis/redis/v9 v9.0.0-rc.2
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.8.1
