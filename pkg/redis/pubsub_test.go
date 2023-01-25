@@ -17,11 +17,9 @@ import (
 
 func redisClient() (redis.UniversalClient, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:         "127.0.0.1:6379",
-		DB:           0,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		MinIdleConns: 10,
+		Addr:        "127.0.0.1:6379",
+		DB:          0,
+		ReadTimeout: -1,
 	})
 	err := client.Ping(context.Background()).Err()
 	if err != nil {
@@ -36,7 +34,13 @@ func newPubSub(t *testing.T, subConfig *SubscriberConfig) (message.Publisher, me
 	pubClient, err := redisClient()
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, logger)
+	publisher, err := NewPublisher(
+		PublisherConfig{
+			Client:     pubClient,
+			Marshaller: &DefaultMarshallerUnmarshaller{},
+		},
+		watermill.NewStdLogger(false, false),
+	)
 	require.NoError(t, err)
 
 	subscriber, err := NewSubscriber(*subConfig, logger)
@@ -58,6 +62,9 @@ func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.
 		Unmarshaller:  &DefaultMarshallerUnmarshaller{},
 		Consumer:      watermill.NewShortUUID(),
 		ConsumerGroup: consumerGroup,
+		BlockTime:     10 * time.Millisecond,
+		ClaimInterval: 3 * time.Second,
+		MaxIdleTime:   5 * time.Second,
 	})
 }
 
@@ -76,7 +83,7 @@ func TestPublishSubscribe(t *testing.T) {
 }
 
 func TestSubscriber(t *testing.T) {
-	topic := "test-topic-subscriber"
+	topic := watermill.NewShortUUID()
 
 	pubClient, err := redisClient()
 	require.NoError(t, err)
@@ -87,8 +94,8 @@ func TestSubscriber(t *testing.T) {
 		SubscriberConfig{
 			Client:        subClient,
 			Unmarshaller:  &DefaultMarshallerUnmarshaller{},
-			Consumer:      "test-consumer",
-			ConsumerGroup: "test-consumer-group",
+			Consumer:      watermill.NewShortUUID(),
+			ConsumerGroup: watermill.NewShortUUID(),
 		},
 		watermill.NewStdLogger(true, false),
 	)
@@ -96,28 +103,39 @@ func TestSubscriber(t *testing.T) {
 	messages, err := subscriber.Subscribe(context.Background(), topic)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: pubClient}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(
+		PublisherConfig{
+			Client:     pubClient,
+			Marshaller: &DefaultMarshallerUnmarshaller{},
+		},
+		watermill.NewStdLogger(false, false),
+	)
 	require.NoError(t, err)
 
+	var sentMsgs message.Messages
 	for i := 0; i < 50; i++ {
-		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
+		msg := message.NewMessage(watermill.NewShortUUID(), nil)
+		require.NoError(t, publisher.Publish(topic, msg))
+		sentMsgs = append(sentMsgs, msg)
 	}
-	require.NoError(t, publisher.Close())
 
+	var receivedMsgs message.Messages
 	for i := 0; i < 50; i++ {
 		msg := <-messages
 		if msg == nil {
 			t.Fatal("msg nil")
 		}
-		t.Logf("%v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		receivedMsgs = append(receivedMsgs, msg)
 		msg.Ack()
 	}
+	tests.AssertAllMessagesReceived(t, sentMsgs, receivedMsgs)
 
+	require.NoError(t, publisher.Close())
 	require.NoError(t, subscriber.Close())
 }
 
 func TestFanOut(t *testing.T) {
-	topic := "test-topic-fanout"
+	topic := watermill.NewShortUUID()
 
 	fanOutPubClient, err := redisClient()
 	require.NoError(t, err)
@@ -148,7 +166,13 @@ func TestFanOut(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	publisher, err := NewPublisher(PublisherConfig{Client: fanOutPubClient}, watermill.NewStdLogger(false, false))
+	publisher, err := NewPublisher(
+		PublisherConfig{
+			Client:     fanOutPubClient,
+			Marshaller: &DefaultMarshallerUnmarshaller{},
+		},
+		watermill.NewStdLogger(false, false),
+	)
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
@@ -164,7 +188,6 @@ func TestFanOut(t *testing.T) {
 	for i := 10; i < 50; i++ {
 		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
 	}
-	require.NoError(t, publisher.Close())
 
 	for i := 10; i < 50; i++ {
 		msg := <-messages1
@@ -181,9 +204,11 @@ func TestFanOut(t *testing.T) {
 			t.Fatal("msg nil")
 		}
 		t.Logf("subscriber 2: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		require.Equal(t, string(msg.Payload), ("test" + strconv.Itoa(i)))
 		msg.Ack()
 	}
 
+	require.NoError(t, publisher.Close())
 	require.NoError(t, subscriber1.Close())
 	require.NoError(t, subscriber2.Close())
 }
