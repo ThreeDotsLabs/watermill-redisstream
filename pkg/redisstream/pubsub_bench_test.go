@@ -1,4 +1,4 @@
-package redis
+package redisstream
 
 import (
 	"testing"

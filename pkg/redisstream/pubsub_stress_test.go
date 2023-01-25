@@ -1,6 +1,6 @@
 //go:build stress
 
-package redis
+package redisstream
 
 import (
 	"testing"
