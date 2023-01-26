@@ -27,3 +27,5 @@ require (
 	google.golang.org/protobuf v1.28.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/ThreeDotsLabs/watermill v1.2.0-rc.2 => github.com/minghsu0107/watermill v0.0.0-20230126060509-3a3b0ea4880f
