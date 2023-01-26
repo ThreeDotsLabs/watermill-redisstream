@@ -20,6 +20,7 @@ func redisClient() (redis.UniversalClient, error) {
 		Addr:        "127.0.0.1:6379",
 		DB:          0,
 		ReadTimeout: -1,
+		PoolTimeout: 15 * time.Minute,
 	})
 	err := client.Ping(context.Background()).Err()
 	if err != nil {
