@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/Rican7/retry v0.3.1
-	github.com/ThreeDotsLabs/watermill v1.2.0-rc.2
+	github.com/ThreeDotsLabs/watermill v1.2.0-rc.11
 	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.0.0-rc.4
 	github.com/stretchr/testify v1.8.1
@@ -28,4 +28,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/ThreeDotsLabs/watermill v1.2.0-rc.2 => github.com/minghsu0107/watermill v0.0.0-20230126060509-3a3b0ea4880f
+replace github.com/ThreeDotsLabs/watermill v1.2.0-rc.11 => github.com/minghsu0107/watermill v0.0.0-20230126061116-b3f5da9bbb66
