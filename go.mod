@@ -28,4 +28,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/ThreeDotsLabs/watermill v1.2.0-rc.11 => github.com/minghsu0107/watermill v0.0.0-20230126112044-c1119d9e90ce
+replace github.com/ThreeDotsLabs/watermill v1.2.0-rc.11 => github.com/minghsu0107/watermill v0.0.0-20230127081707-d33f6e7c79b9
