@@ -6,5 +6,3 @@ on:
 jobs:
   ci:
     uses: ThreeDotsLabs/watermill/.github/workflows/tests.yml@master
-    with:
-      stress-tests: true
