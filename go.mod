@@ -1,4 +1,4 @@
-module github.com/minghsu0107/watermill-redisstream
+module github.com/ThreeDotsLabs/watermill-redisstream
 
 go 1.19
 
