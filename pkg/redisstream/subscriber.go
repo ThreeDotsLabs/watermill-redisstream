@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	oldestId       = "0"
 	groupStartid   = ">"
 	redisBusyGroup = "BUSYGROUP Consumer Group name already exists"
 )
@@ -83,6 +82,11 @@ type SubscriberConfig struct {
 
 	// How long should we treat a consumer as offline
 	MaxIdleTime time.Duration
+
+	// Start consumption from the specified message ID
+	// When using "0", the consumer group will consume from the very first message
+	// When using "$", the consumer group will consume from the latest message
+	OldestId string
 }
 
 func (sc *SubscriberConfig) setDefaults() {
@@ -103,6 +107,10 @@ func (sc *SubscriberConfig) setDefaults() {
 	}
 	if sc.MaxIdleTime == 0 {
 		sc.MaxIdleTime = DefaultMaxIdleTime
+	}
+	// Consume from scratch by default
+	if sc.OldestId == "" {
+		sc.OldestId = "0"
 	}
 }
 
@@ -161,7 +169,7 @@ func (s *Subscriber) consumeMessages(ctx context.Context, topic string, output c
 	}()
 	if s.config.ConsumerGroup != "" {
 		// create consumer group
-		if _, err := s.client.XGroupCreateMkStream(ctx, topic, s.config.ConsumerGroup, oldestId).Result(); err != nil && err.Error() != redisBusyGroup {
+		if _, err := s.client.XGroupCreateMkStream(ctx, topic, s.config.ConsumerGroup, s.config.OldestId).Result(); err != nil && err.Error() != redisBusyGroup {
 			return nil, err
 		}
 	}
