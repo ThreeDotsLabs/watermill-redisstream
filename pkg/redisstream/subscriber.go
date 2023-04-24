@@ -23,6 +23,8 @@ const (
 
 	DefaultBlockTime time.Duration = time.Millisecond * 100
 
+	DefaultMaxFetch int64 = 100
+
 	DefaultClaimInterval time.Duration = time.Second * 5
 
 	// Default max idle time for pending message.
@@ -77,7 +79,11 @@ type SubscriberConfig struct {
 	// Block to wait next redis stream message
 	BlockTime time.Duration
 
+	// maximum number of fetched messages in each poll
+	MaxFetch int64
+
 	// Claim idle pending message interval
+
 	ClaimInterval time.Duration
 
 	// How long should we treat a consumer as offline
@@ -101,6 +107,9 @@ func (sc *SubscriberConfig) setDefaults() {
 	}
 	if sc.BlockTime == 0 {
 		sc.BlockTime = DefaultBlockTime
+	}
+	if sc.MaxFetch == 0 {
+		sc.MaxFetch = DefaultMaxFetch
 	}
 	if sc.ClaimInterval == 0 {
 		sc.ClaimInterval = DefaultClaimInterval
@@ -233,8 +242,6 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 		streamsGroup = []string{stream, groupStartid}
 
 		fanOutStartid               = "$"
-		countFanOut   int64         = 0
-		blockTime     time.Duration = 0
 
 		xss []redis.XStream
 		xs  *redis.XStream
@@ -265,15 +272,15 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 						Group:    s.config.ConsumerGroup,
 						Consumer: s.config.Consumer,
 						Streams:  streamsGroup,
-						Count:    1,
-						Block:    blockTime,
+						Count:    s.config.MaxFetch,
+						Block:    s.config.BlockTime,
 					}).Result()
 			} else {
 				xss, err = s.client.XRead(
 					ctx,
 					&redis.XReadArgs{
 						Streams: []string{stream, fanOutStartid},
-						Count:   countFanOut,
+						Count:   s.config.MaxFetch,
 						Block:   s.config.BlockTime,
 					}).Result()
 			}
@@ -287,10 +294,9 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			}
 			// update last delivered message
 			xs = &xss[0]
+
 			if s.config.ConsumerGroup == "" {
-				fanOutStartid = xs.Messages[0].ID
-				countFanOut = 1
-				blockTime = s.config.BlockTime
+				fanOutStartid = xs.Messages[len(xs.Messages)-1].ID
 			}
 			select {
 			case <-s.closing:
