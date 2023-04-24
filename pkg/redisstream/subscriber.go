@@ -274,7 +274,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 					&redis.XReadArgs{
 						Streams: []string{stream, fanOutStartid},
 						Count:   countFanOut,
-						Block:   s.config.BlockTime,
+						Block:   blockTime,
 					}).Result()
 			}
 			if err == redis.Nil {
@@ -290,8 +290,10 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			if s.config.ConsumerGroup == "" {
 				fanOutStartid = xs.Messages[0].ID
 				countFanOut = 1
-				blockTime = s.config.BlockTime
 			}
+
+			blockTime = s.config.BlcokTime
+
 			select {
 			case <-s.closing:
 				return
