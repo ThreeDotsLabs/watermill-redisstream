@@ -21,14 +21,16 @@ const (
 	// NoSleep can be set to SubscriberConfig.NackResendSleep
 	NoSleep time.Duration = -1
 
-	DefaultBlockTime time.Duration = time.Millisecond * 100
+	DefaultBlockTime = time.Millisecond * 100
 
 	// How often to check for dead workers to claim pending messages from
-	DefaultClaimInterval time.Duration = time.Second * 5
+	DefaultClaimInterval = time.Second * 5
+
+	DefaultClaimBatchSize = int64(100)
 
 	// Default max idle time for pending message.
 	// After timeout, the message will be claimed and its idle consumer will be removed from consumer group
-	DefaultMaxIdleTime time.Duration = time.Second * 60
+	DefaultMaxIdleTime = time.Second * 60
 )
 
 type Subscriber struct {
@@ -81,6 +83,9 @@ type SubscriberConfig struct {
 	// Claim idle pending message interval
 	ClaimInterval time.Duration
 
+	// How many pending messages are claimed at most each claim interval
+	ClaimBatchSize int64
+
 	// How long should we treat a consumer as offline
 	MaxIdleTime time.Duration
 
@@ -117,6 +122,9 @@ func (sc *SubscriberConfig) setDefaults() {
 	}
 	if sc.ClaimInterval == 0 {
 		sc.ClaimInterval = DefaultClaimInterval
+	}
+	if sc.ClaimBatchSize == 0 {
+		sc.ClaimBatchSize = DefaultClaimBatchSize
 	}
 	if sc.MaxIdleTime == 0 {
 		sc.MaxIdleTime = DefaultMaxIdleTime
@@ -316,10 +324,6 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 	}
 }
 
-// how many pending messages we process at most
-// at each invocation of the claim function below
-const claimBatchSize = int64(100)
-
 func (s *Subscriber) claim(ctx context.Context, stream string, readChannel chan<- *redis.XStream, keep bool, wg *sync.WaitGroup, logFields watermill.LogFields) {
 	defer wg.Done()
 	var (
@@ -355,7 +359,7 @@ OUTER_LOOP:
 			Idle:   s.config.MaxIdleTime,
 			Start:  "0",
 			End:    "+",
-			Count:  claimBatchSize,
+			Count:  s.config.ClaimBatchSize,
 		}).Result()
 		if err != nil {
 			s.logger.Error(
@@ -411,7 +415,7 @@ OUTER_LOOP:
 				}
 			}
 		}
-		if len(xps) == 0 || int64(len(xps)) < claimBatchSize { // done
+		if len(xps) == 0 || int64(len(xps)) < s.config.ClaimBatchSize { // done
 			if !keep {
 				return
 			}
