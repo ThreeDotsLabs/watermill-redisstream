@@ -292,7 +292,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 				countFanOut = 1
 			}
 
-			blockTime = s.config.BlcokTime
+			blockTime = s.config.BlockTime
 
 			select {
 			case <-s.closing:
