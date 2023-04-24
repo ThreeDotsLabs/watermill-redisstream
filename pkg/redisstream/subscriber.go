@@ -23,6 +23,7 @@ const (
 
 	DefaultBlockTime time.Duration = time.Millisecond * 100
 
+	// How often to check for dead workers to claim pending messages from
 	DefaultClaimInterval time.Duration = time.Second * 5
 
 	// Default max idle time for pending message.
@@ -87,6 +88,18 @@ type SubscriberConfig struct {
 	// When using "0", the consumer group will consume from the very first message
 	// When using "$", the consumer group will consume from the latest message
 	OldestId string
+
+	// If this is set, it will be called to decide whether messages that
+	// have been idle for longer than MaxIdleTime should actually be re-claimed,
+	// and the consumer that had previously claimed it should be kicked out.
+	// If this is not set, then all messages that have been idle for longer
+	// than MaxIdleTime will be re-claimed.
+	// This can be useful e.g. for tasks where the processing time can be very variable -
+	// so we can't just use a short MaxIdleTime; but where at the same time dead
+	// workers should be spotted quickly - so we can't just use a long MaxIdleTime either.
+	// In such cases, if we have another way of checking for workers' health, then we can
+	// leverage that in this callback.
+	ShouldClaimPendingMessage func(redis.XPendingExt) bool
 }
 
 func (sc *SubscriberConfig) setDefaults() {
@@ -303,19 +316,19 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 	}
 }
 
+// how many pending messages we process at most
+// at each invocation of the claim function below
+const claimBatchSize = int64(100)
+
 func (s *Subscriber) claim(ctx context.Context, stream string, readChannel chan<- *redis.XStream, keep bool, wg *sync.WaitGroup, logFields watermill.LogFields) {
 	defer wg.Done()
 	var (
-		start             = "0"
-		end               = "+"
-		count       int64 = 100
-		maxIdleTime time.Duration
-		xps         []redis.XPendingExt
-		err         error
-		xp          redis.XPendingExt
-		xm          []redis.XMessage
-		tick        = time.NewTicker(s.config.ClaimInterval)
-		initCh      = make(chan byte, 1)
+		xps    []redis.XPendingExt
+		err    error
+		xp     redis.XPendingExt
+		xm     []redis.XMessage
+		tick   = time.NewTicker(s.config.ClaimInterval)
+		initCh = make(chan byte, 1)
 	)
 	defer func() {
 		tick.Stop()
@@ -335,12 +348,14 @@ OUTER_LOOP:
 		case <-tick.C:
 		case <-initCh:
 		}
+
 		xps, err = s.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 			Stream: stream,
 			Group:  s.config.ConsumerGroup,
-			Start:  start,
-			End:    end,
-			Count:  count,
+			Idle:   s.config.MaxIdleTime,
+			Start:  "0",
+			End:    "+",
+			Count:  claimBatchSize,
 		}).Result()
 		if err != nil {
 			s.logger.Error(
@@ -351,16 +366,19 @@ OUTER_LOOP:
 			continue
 		}
 		for _, xp = range xps {
-			if maxIdleTime < xp.Idle {
-				maxIdleTime = xp.Idle
+			shouldClaim := xp.Idle >= s.config.MaxIdleTime
+			if shouldClaim && s.config.ShouldClaimPendingMessage != nil {
+				shouldClaim = s.config.ShouldClaimPendingMessage(xp)
 			}
 
-			if xp.Idle >= s.config.MaxIdleTime {
+			if shouldClaim {
 				// assign the ownership of a pending message to the current consumer
 				xm, err = s.client.XClaim(ctx, &redis.XClaimArgs{
 					Stream:   stream,
 					Group:    s.config.ConsumerGroup,
 					Consumer: s.config.Consumer,
+					// this is important: it ensures that 2 concurrent subscribers
+					// won't claim the same pending message at the same time
 					MinIdle:  s.config.MaxIdleTime,
 					Messages: []string{xp.ID},
 				}).Result()
@@ -372,6 +390,7 @@ OUTER_LOOP:
 					)
 					continue OUTER_LOOP
 				}
+
 				// delete idle consumer
 				if err = s.client.XGroupDelConsumer(ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
 					s.logger.Error(
@@ -392,7 +411,7 @@ OUTER_LOOP:
 				}
 			}
 		}
-		if len(xps) == 0 || int64(len(xps)) < count { // done
+		if len(xps) == 0 || int64(len(xps)) < claimBatchSize { // done
 			if !keep {
 				return
 			}
