@@ -23,8 +23,6 @@ const (
 
 	DefaultBlockTime time.Duration = time.Millisecond * 100
 
-	DefaultMaxFetch int64 = 256
-
 	DefaultClaimInterval time.Duration = time.Second * 5
 
 	// Default max idle time for pending message.
@@ -79,9 +77,6 @@ type SubscriberConfig struct {
 	// Block to wait next redis stream message
 	BlockTime time.Duration
 
-	// Max number of fetched messages in each read
-	MaxFetch int64
-
 	// Claim idle pending message interval
 	ClaimInterval time.Duration
 
@@ -106,9 +101,6 @@ func (sc *SubscriberConfig) setDefaults() {
 	}
 	if sc.BlockTime == 0 {
 		sc.BlockTime = DefaultBlockTime
-	}
-	if sc.MaxFetch == 0 {
-		sc.MaxFetch = DefaultMaxFetch
 	}
 	if sc.ClaimInterval == 0 {
 		sc.ClaimInterval = DefaultClaimInterval
@@ -273,7 +265,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 						Group:    s.config.ConsumerGroup,
 						Consumer: s.config.Consumer,
 						Streams:  streamsGroup,
-						Count:    s.config.MaxFetch,
+						Count:    1,
 						Block:    blockTime,
 					}).Result()
 			} else {
@@ -296,8 +288,8 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			// update last delivered message
 			xs = &xss[0]
 			if s.config.ConsumerGroup == "" {
-				fanOutStartid = xs.Messages[len(xs.Messages)-1].ID
-				countFanOut = s.config.MaxFetch
+				fanOutStartid = xs.Messages[0].ID
+				countFanOut = 1
 			}
 
 			blockTime = s.config.BlockTime
