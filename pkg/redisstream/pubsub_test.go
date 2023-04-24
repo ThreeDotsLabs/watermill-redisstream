@@ -20,7 +20,7 @@ func redisClient() (redis.UniversalClient, error) {
 		Addr:        "127.0.0.1:6379",
 		DB:          0,
 		ReadTimeout: -1,
-		PoolTimeout: 10 * time.Minute,
+		PoolTimeout: 20 * time.Minute,
 	})
 	err := client.Ping(context.Background()).Err()
 	if err != nil {
@@ -63,7 +63,7 @@ func createPubSubWithConsumerGroup(t *testing.T, consumerGroup string) (message.
 		Unmarshaller:  &DefaultMarshallerUnmarshaller{},
 		Consumer:      watermill.NewShortUUID(),
 		ConsumerGroup: consumerGroup,
-		BlockTime:     10 * time.Millisecond,
+		BlockTime:     1 * time.Millisecond,
 		ClaimInterval: 3 * time.Second,
 		MaxIdleTime:   5 * time.Second,
 	})
