@@ -46,7 +46,7 @@ func (DefaultMarshallerUnmarshaller) Marshal(_ string, msg *message.Message) (ma
 }
 
 func (DefaultMarshallerUnmarshaller) Unmarshal(values map[string]interface{}) (msg *message.Message, err error) {
-	msg = message.NewMessage(values[UUIDHeaderKey].(string), []byte(values["payload"].(string)))
+	msg = message.NewMessage(values[UUIDHeaderKey].(string), values["payload"].([]byte))
 
 	md := values["metadata"]
 	if md != nil {
