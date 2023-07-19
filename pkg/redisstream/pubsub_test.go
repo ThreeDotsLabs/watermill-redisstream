@@ -3,6 +3,7 @@ package redisstream
 import (
 	"context"
 	"math/rand"
+	"sort"
 	"strconv"
 	"sync"
 	"testing"
@@ -342,4 +343,81 @@ func TestClaimIdle(t *testing.T) {
 	}
 
 	assert.GreaterOrEqual(t, nMsgsWithRetries, 3)
+}
+
+func TestSubscriber_ClaimAllMessages(t *testing.T) {
+	rdb := redisClientOrFail(t)
+
+	logger := watermill.NewStdLogger(true, true)
+
+	topic := watermill.NewShortUUID()
+	consumerGroup := watermill.NewShortUUID()
+
+	// This one should claim all messages
+	subGood, err := NewSubscriber(SubscriberConfig{
+		Client:        rdb,
+		ConsumerGroup: consumerGroup,
+		Consumer:      "good",
+		MaxIdleTime:   500 * time.Millisecond,
+		ClaimInterval: 500 * time.Millisecond,
+	}, logger)
+	require.NoError(t, err)
+
+	// This one never acks
+	subBad, err := NewSubscriber(SubscriberConfig{
+		Client:        rdb,
+		ConsumerGroup: consumerGroup,
+		Consumer:      "bad",
+	}, logger)
+	require.NoError(t, err)
+
+	pub, err := NewPublisher(PublisherConfig{
+		Client: rdb,
+	}, logger)
+	require.NoError(t, err)
+
+	for i := 0; i < 10; i++ {
+		err = pub.Publish(topic, message.NewMessage(watermill.NewUUID(), []byte(strconv.Itoa(i))))
+		assert.NoError(t, err)
+	}
+
+	badCtx, badCancel := context.WithCancel(context.Background())
+	defer badCancel()
+
+	msgs, err := subBad.Subscribe(badCtx, topic)
+	require.NoError(t, err)
+
+	// Pull a message, don't ack it!
+	<-msgs
+
+	// Cancel the bad subscriber
+	badCancel()
+
+	goodCtx, goodCancel := context.WithCancel(context.Background())
+	defer goodCancel()
+
+	msgs, err = subGood.Subscribe(goodCtx, topic)
+	require.NoError(t, err)
+
+	var processedMessages []string
+
+	// Try to receive all messages
+	for i := 0; i < 10; i++ {
+		select {
+		case msg, ok := <-msgs:
+			assert.True(t, ok)
+			processedMessages = append(processedMessages, string(msg.Payload))
+			msg.Ack()
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting to receive all messages")
+		}
+	}
+
+	sort.Strings(processedMessages)
+	assert.Equal(t, []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}, processedMessages)
+
+	assert.Eventually(t, func() bool {
+		xic, _ := rdb.XInfoConsumers(context.Background(), topic, consumerGroup).Result()
+		return len(xic) == 1 && xic[0].Name == "good"
+	}, 5*time.Second, 100*time.Millisecond, "Idle consumer should be deleted")
 }

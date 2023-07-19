@@ -333,6 +333,8 @@ func (s *Subscriber) claim(ctx context.Context, stream string, readChannel chan<
 		err    error
 		xp     redis.XPendingExt
 		xm     []redis.XMessage
+		xics   []redis.XInfoConsumer
+		xic    redis.XInfoConsumer
 		tick   = time.NewTicker(s.config.ClaimInterval)
 		initCh = make(chan byte, 1)
 	)
@@ -355,6 +357,7 @@ OUTER_LOOP:
 		case <-initCh:
 		}
 
+		s.logger.Trace("XPendingExt", logFields)
 		xps, err = s.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 			Stream: stream,
 			Group:  s.config.ConsumerGroup,
@@ -397,14 +400,29 @@ OUTER_LOOP:
 					continue OUTER_LOOP
 				}
 
-				// delete idle consumer
-				if err = s.client.XGroupDelConsumer(ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
+				xics, err = s.client.XInfoConsumers(ctx, stream, s.config.ConsumerGroup).Result()
+				if err != nil {
 					s.logger.Error(
-						"xgroupdelconsumer fail",
+						"xinfoconsumers fail",
 						err,
 						logFields.Add(watermill.LogFields{"xp": xp}),
 					)
 					continue OUTER_LOOP
+				}
+				for _, xic = range xics {
+					if xic.Name != xp.Consumer {
+						continue
+					}
+					if xic.Pending == 0 {
+						if err = s.client.XGroupDelConsumer(ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
+							s.logger.Error(
+								"xgroupdelconsumer fail",
+								err,
+								logFields.Add(watermill.LogFields{"xp": xp}),
+							)
+							continue OUTER_LOOP
+						}
+					}
 				}
 				if len(xm) > 0 {
 					select {
