@@ -23,14 +23,21 @@ const (
 
 	DefaultBlockTime = time.Millisecond * 100
 
-	// How often to check for dead workers to claim pending messages from
+	// How often to claim pending messages
 	DefaultClaimInterval = time.Second * 5
 
 	DefaultClaimBatchSize = int64(100)
 
-	// Default max idle time for pending message.
-	// After timeout, the message will be claimed and its idle consumer will be removed from consumer group
+	// Default max idle time for pending message
+	// After timeout, the message will be claimed
 	DefaultMaxIdleTime = time.Second * 60
+
+	// How often to check for dead consumers
+	DefaultCheckConsumersInterval = time.Second * 300
+
+	// Default consumer timeout
+	// After being idle longer than timeout and having no pending messages, it will be removed from the consumer group
+	DefaultConsumerTimeout = time.Second * 600
 )
 
 type Subscriber struct {
@@ -86,8 +93,14 @@ type SubscriberConfig struct {
 	// How many pending messages are claimed at most each claim interval
 	ClaimBatchSize int64
 
-	// How long should we treat a consumer as offline
+	// How long should we treat a pending message as claimable
 	MaxIdleTime time.Duration
+
+	// Check consumer status interval
+	CheckConsumersInterval time.Duration
+
+	// After which time an idle consumer with no pending messages will be removed from the consumer group
+	ConsumerTimeout time.Duration
 
 	// Start consumption from the specified message ID
 	// When using "0", the consumer group will consume from the very first message
@@ -128,6 +141,12 @@ func (sc *SubscriberConfig) setDefaults() {
 	}
 	if sc.MaxIdleTime == 0 {
 		sc.MaxIdleTime = DefaultMaxIdleTime
+	}
+	if sc.CheckConsumersInterval == 0 {
+		sc.CheckConsumersInterval = DefaultCheckConsumersInterval
+	}
+	if sc.ConsumerTimeout == 0 {
+		sc.ConsumerTimeout = DefaultConsumerTimeout
 	}
 	// Consume from scratch by default
 	if sc.OldestId == "" {
@@ -244,9 +263,9 @@ func (s *Subscriber) consumeStreams(ctx context.Context, stream string, output c
 
 func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<- *redis.XStream, logFields watermill.LogFields) {
 	wg := &sync.WaitGroup{}
-	claimCtx, claimCancel := context.WithCancel(ctx)
+	subCtx, subCancel := context.WithCancel(ctx)
 	defer func() {
-		claimCancel()
+		subCancel()
 		wg.Wait()
 		close(readChannel)
 	}()
@@ -265,11 +284,15 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 	if s.config.ConsumerGroup != "" {
 		// 1. get pending message from idle consumer
 		wg.Add(1)
-		s.claim(claimCtx, stream, readChannel, false, wg, logFields)
+		s.claim(subCtx, stream, readChannel, false, wg, logFields)
 
 		// 2. background
 		wg.Add(1)
-		go s.claim(claimCtx, stream, readChannel, true, wg, logFields)
+		go s.claim(subCtx, stream, readChannel, true, wg, logFields)
+
+		// check consumer status and remove idling consumers if possible
+		wg.Add(1)
+		go s.checkConsumers(subCtx, stream, wg, logFields)
 	}
 
 	for {
@@ -327,20 +350,18 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 }
 
 func (s *Subscriber) claim(ctx context.Context, stream string, readChannel chan<- *redis.XStream, keep bool, wg *sync.WaitGroup, logFields watermill.LogFields) {
-	defer wg.Done()
 	var (
 		xps    []redis.XPendingExt
 		err    error
 		xp     redis.XPendingExt
 		xm     []redis.XMessage
-		xics   []redis.XInfoConsumer
-		xic    redis.XInfoConsumer
 		tick   = time.NewTicker(s.config.ClaimInterval)
 		initCh = make(chan byte, 1)
 	)
 	defer func() {
 		tick.Stop()
 		close(initCh)
+		wg.Done()
 	}()
 	if !keep { // if not keep, run immediately
 		initCh <- 1
@@ -357,7 +378,6 @@ OUTER_LOOP:
 		case <-initCh:
 		}
 
-		s.logger.Trace("XPendingExt", logFields)
 		xps, err = s.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 			Stream: stream,
 			Group:  s.config.ConsumerGroup,
@@ -399,31 +419,6 @@ OUTER_LOOP:
 					)
 					continue OUTER_LOOP
 				}
-
-				xics, err = s.client.XInfoConsumers(ctx, stream, s.config.ConsumerGroup).Result()
-				if err != nil {
-					s.logger.Error(
-						"xinfoconsumers fail",
-						err,
-						logFields.Add(watermill.LogFields{"xp": xp}),
-					)
-					continue OUTER_LOOP
-				}
-				for _, xic = range xics {
-					if xic.Name != xp.Consumer {
-						continue
-					}
-					if xic.Pending == 0 {
-						if err = s.client.XGroupDelConsumer(ctx, stream, s.config.ConsumerGroup, xp.Consumer).Err(); err != nil {
-							s.logger.Error(
-								"xgroupdelconsumer fail",
-								err,
-								logFields.Add(watermill.LogFields{"xp": xp}),
-							)
-							continue OUTER_LOOP
-						}
-					}
-				}
 				if len(xm) > 0 {
 					select {
 					case <-s.closing:
@@ -440,6 +435,46 @@ OUTER_LOOP:
 				return
 			}
 			continue
+		}
+	}
+}
+
+func (s *Subscriber) checkConsumers(ctx context.Context, stream string, wg *sync.WaitGroup, logFields watermill.LogFields) {
+	tick := time.NewTicker(s.config.CheckConsumersInterval)
+	defer func() {
+		tick.Stop()
+		wg.Done()
+	}()
+
+	for {
+		select {
+		case <-s.closing:
+			return
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		xics, err := s.client.XInfoConsumers(ctx, stream, s.config.ConsumerGroup).Result()
+		if err != nil {
+			s.logger.Error(
+				"xinfoconsumers failed",
+				err,
+				logFields,
+			)
+		}
+		for _, xic := range xics {
+			if xic.Idle < s.config.ConsumerTimeout {
+				continue
+			}
+			if xic.Pending == 0 {
+				if err = s.client.XGroupDelConsumer(ctx, stream, s.config.ConsumerGroup, xic.Name).Err(); err != nil {
+					s.logger.Error(
+						"xgroupdelconsumer failed",
+						err,
+						logFields,
+					)
+				}
+			}
 		}
 	}
 }

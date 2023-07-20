@@ -355,11 +355,13 @@ func TestSubscriber_ClaimAllMessages(t *testing.T) {
 
 	// This one should claim all messages
 	subGood, err := NewSubscriber(SubscriberConfig{
-		Client:        rdb,
-		ConsumerGroup: consumerGroup,
-		Consumer:      "good",
-		MaxIdleTime:   500 * time.Millisecond,
-		ClaimInterval: 500 * time.Millisecond,
+		Client:                 rdb,
+		ConsumerGroup:          consumerGroup,
+		Consumer:               "good",
+		MaxIdleTime:            500 * time.Millisecond,
+		ClaimInterval:          500 * time.Millisecond,
+		CheckConsumersInterval: 1 * time.Second,
+		ConsumerTimeout:        2 * time.Second,
 	}, logger)
 	require.NoError(t, err)
 
@@ -414,7 +416,11 @@ func TestSubscriber_ClaimAllMessages(t *testing.T) {
 	}
 
 	sort.Strings(processedMessages)
-	assert.Equal(t, []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}, processedMessages)
+	var expected []string
+	for i := 0; i < 10; i++ {
+		expected = append(expected, strconv.Itoa(i))
+	}
+	assert.Equal(t, expected, processedMessages)
 
 	assert.Eventually(t, func() bool {
 		xic, _ := rdb.XInfoConsumers(context.Background(), topic, consumerGroup).Result()
