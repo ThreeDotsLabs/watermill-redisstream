@@ -66,8 +66,8 @@ func (c *PublisherConfig) Validate() error {
 
 // Publish publishes message to redis stream
 //
-// Publish is blocking and wait for redis response
-// When one of messages delivery fails - function is interrupted.
+// Publish is blocking and waits for redis response.
+// When any of messages delivery fails - function is interrupted.
 func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 	if p.closed {
 		return errors.New("publisher closed")
