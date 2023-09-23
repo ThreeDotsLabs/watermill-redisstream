@@ -552,33 +552,30 @@ ResendLoop:
 
 		select {
 		case <-msg.Acked():
-			// deadly retry ack
-			p := h.rc.Pipeline()
 			if h.consumerGroup != "" {
-				p.XAck(ctx, stream, h.consumerGroup, xm.ID)
-			}
-			err := retry.Retry(func(attempt uint) error {
-				_, err := p.Exec(ctx)
-				return err
-			}, func(attempt uint) bool {
-				if attempt != 0 {
-					time.Sleep(time.Millisecond * 100)
-				}
-				return true
-			}, func(attempt uint) bool {
-				select {
-				case <-h.closing:
-				case <-ctx.Done():
-				default:
+				// deadly retry ack
+				err := retry.Retry(func(attempt uint) error {
+					err := h.rc.XAck(ctx, stream, h.consumerGroup, xm.ID).Err()
+					return err
+				}, func(attempt uint) bool {
+					if attempt != 0 {
+						time.Sleep(time.Millisecond * 100)
+					}
 					return true
+				}, func(attempt uint) bool {
+					select {
+					case <-h.closing:
+					case <-ctx.Done():
+					default:
+						return true
+					}
+					return false
+				})
+				if err != nil {
+					h.logger.Error("Message Acked fail", err, receivedMsgLogFields)
 				}
-				return false
-			})
-			if err != nil {
-				h.logger.Error("Message Acked fail", err, receivedMsgLogFields)
-			} else {
-				h.logger.Trace("Message Acked", receivedMsgLogFields)
 			}
+			h.logger.Trace("Message Acked", receivedMsgLogFields)
 			break ResendLoop
 		case <-msg.Nacked():
 			h.logger.Trace("Message Nacked", receivedMsgLogFields)
