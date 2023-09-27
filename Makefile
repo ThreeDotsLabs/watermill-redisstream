@@ -23,6 +23,9 @@ fmt:
 build:
 	go build ./...
 
+test_codecov: up wait
+	go test -coverprofile=coverage.out -covermode=atomic ./...
+
 wait:
 	go run github.com/ThreeDotsLabs/wait-for@latest localhost:6379
 
