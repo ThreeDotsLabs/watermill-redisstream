@@ -23,7 +23,7 @@ fmt:
 build:
 	go build ./...
 
-test_codecov:
+test_codecov: up wait
 	go test -coverprofile=coverage.out -covermode=atomic ./...
 
 wait:
