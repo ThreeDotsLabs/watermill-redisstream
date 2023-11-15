@@ -315,6 +315,8 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			if err == redis.Nil {
 				continue
 			} else if err != nil {
+				// prevent excessive output from abnormal connections
+				time.Sleep(500 * time.Millisecond)
 				s.logger.Error("read fail", err, logFields)
 			}
 			if len(xss) < 1 || len(xss[0].Messages) < 1 {
