@@ -303,6 +303,10 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 						Count:    1,
 						Block:    blockTime,
 					}).Result()
+				if err != nil && redis.HasErrorPrefix(err, "NOGROUP") {
+					s.logger.Error("NOGROUP read fail", err, logFields)
+					return
+				}
 			} else {
 				xss, err = s.client.XRead(
 					ctx,
