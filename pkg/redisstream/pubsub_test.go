@@ -1,6 +1,7 @@
 package redisstream
 
 import (
+	"bytes"
 	"context"
 	"math/rand"
 	"sort"
@@ -426,4 +427,122 @@ func TestSubscriber_ClaimAllMessages(t *testing.T) {
 		xic, _ := rdb.XInfoConsumers(context.Background(), topic, consumerGroup).Result()
 		return len(xic) == 1 && xic[0].Name == "good"
 	}, 5*time.Second, 100*time.Millisecond, "Idle consumer should be deleted")
+}
+
+func TestSubscriber_read(t *testing.T) {
+
+	t.Run("Without ShouldStopOnReadErrors", func(t *testing.T) {
+		t.Parallel()
+		rdb := redisClientOrFail(t)
+		var buf bytes.Buffer
+		logger := watermill.NewStdLoggerWithOut(&buf, false, false)
+		topic := watermill.NewShortUUID()
+		consumerGroup := watermill.NewShortUUID()
+		consumer := watermill.NewShortUUID()
+
+		// This one should claim all messages
+		sub, err := NewSubscriber(SubscriberConfig{
+			Client:                 rdb,
+			ConsumerGroup:          consumerGroup,
+			Consumer:               consumer,
+			MaxIdleTime:            500 * time.Millisecond,
+			ClaimInterval:          500 * time.Millisecond,
+			CheckConsumersInterval: 1 * time.Second,
+			ConsumerTimeout:        2 * time.Second,
+		}, logger)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		msg, err := sub.Subscribe(ctx, topic)
+		require.NoError(t, err)
+		go func() {
+			for {
+				select {
+				case <-msg:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		require.NotContains(t, buf.String(), "read fail")
+		require.NotContains(t, buf.String(), "NOGROUP No such key '"+topic+"'")
+		time.Sleep(30 * time.Millisecond)
+		rdb.Del(ctx, topic)
+		err = rdb.XAdd(context.Background(), &redis.XAddArgs{
+			Stream: topic,
+			Values: map[string]any{
+				"test": "test",
+			},
+			Approx: true,
+		}).Err()
+		require.NoError(t, err)
+		time.Sleep(600 * time.Millisecond)
+		require.Contains(t, buf.String(), "read fail")
+		require.Contains(t, buf.String(), "NOGROUP No such key '"+topic+"'")
+		require.NotContains(t, buf.String(), "stop reading after error")
+		require.NoError(t, sub.Close())
+	})
+
+	t.Run("With ShouldStopOnReadErrors", func(t *testing.T) {
+		t.Parallel()
+		rdb := redisClientOrFail(t)
+		var buf bytes.Buffer
+		logger := watermill.NewStdLoggerWithOut(&buf, false, false)
+		topic := watermill.NewShortUUID()
+		consumerGroup := watermill.NewShortUUID()
+		consumer := watermill.NewShortUUID()
+
+		sub, err := NewSubscriber(SubscriberConfig{
+			Client:                 rdb,
+			ConsumerGroup:          consumerGroup,
+			Consumer:               consumer,
+			MaxIdleTime:            500 * time.Millisecond,
+			ClaimInterval:          500 * time.Millisecond,
+			CheckConsumersInterval: 1 * time.Second,
+			ConsumerTimeout:        2 * time.Second,
+			ShouldStopOnReadErrors: func(err error) bool {
+				return err != nil && redis.HasErrorPrefix(err, "NOGROUP")
+			},
+		}, logger)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		msg, err := sub.Subscribe(ctx, topic)
+		require.NoError(t, err)
+		done := make(chan bool)
+		go func() {
+			for {
+				select {
+				case _, ok := <-msg:
+					if !ok {
+						done <- true
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		require.NotContains(t, buf.String(), "read fail")
+		require.NotContains(t, buf.String(), "NOGROUP No such key '"+topic+"'")
+		time.Sleep(30 * time.Millisecond)
+		rdb.Del(ctx, topic)
+		err = rdb.XAdd(context.Background(), &redis.XAddArgs{
+			Stream: topic,
+			Values: map[string]any{
+				"test": "test",
+			},
+			Approx: true,
+		}).Err()
+		require.NoError(t, err)
+		time.Sleep(600 * time.Millisecond)
+		require.True(t, <-done, true)
+		require.Contains(t, buf.String(), "NOGROUP No such key '"+topic+"'")
+		require.Contains(t, buf.String(), "stop reading after error")
+		require.NoError(t, sub.Close())
+	})
+
 }

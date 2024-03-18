@@ -109,6 +109,11 @@ type SubscriberConfig struct {
 	// In such cases, if we have another way for checking consumers' health, then we can
 	// leverage that in this callback.
 	ShouldClaimPendingMessage func(redis.XPendingExt) bool
+
+	// If this is set, it will be called to decide whether a reading error
+	// should return the read method and close the subscriber or just log the error
+	// and continue.
+	ShouldStopOnReadErrors func(error) bool
 }
 
 func (sc *SubscriberConfig) setDefaults() {
@@ -303,10 +308,6 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 						Count:    1,
 						Block:    blockTime,
 					}).Result()
-				if err != nil && redis.HasErrorPrefix(err, "NOGROUP") {
-					s.logger.Error("NOGROUP read fail", err, logFields)
-					return
-				}
 			} else {
 				xss, err = s.client.XRead(
 					ctx,
@@ -319,6 +320,12 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 			if err == redis.Nil {
 				continue
 			} else if err != nil {
+				if s.config.ShouldStopOnReadErrors != nil {
+					if s.config.ShouldStopOnReadErrors(err) {
+						s.logger.Error("stop reading after error", err, logFields)
+						return
+					}
+				}
 				// prevent excessive output from abnormal connections
 				time.Sleep(500 * time.Millisecond)
 				s.logger.Error("read fail", err, logFields)
