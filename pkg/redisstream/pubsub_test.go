@@ -429,12 +429,28 @@ func TestSubscriber_ClaimAllMessages(t *testing.T) {
 	}, 5*time.Second, 100*time.Millisecond, "Idle consumer should be deleted")
 }
 
+type threadSafeBuffer struct {
+	b bytes.Buffer
+	m sync.Mutex
+}
+
+func (b *threadSafeBuffer) Write(p []byte) (n int, err error) {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.b.Write(p)
+}
+func (b *threadSafeBuffer) String() string {
+	b.m.Lock()
+	defer b.m.Unlock()
+	return b.b.String()
+}
+
 func TestSubscriber_read(t *testing.T) {
 
 	t.Run("Without ShouldStopOnReadErrors", func(t *testing.T) {
 		t.Parallel()
 		rdb := redisClientOrFail(t)
-		var buf bytes.Buffer
+		var buf threadSafeBuffer
 		logger := watermill.NewStdLoggerWithOut(&buf, false, false)
 		topic := watermill.NewShortUUID()
 		consumerGroup := watermill.NewShortUUID()
@@ -488,7 +504,7 @@ func TestSubscriber_read(t *testing.T) {
 	t.Run("With ShouldStopOnReadErrors", func(t *testing.T) {
 		t.Parallel()
 		rdb := redisClientOrFail(t)
-		var buf bytes.Buffer
+		var buf threadSafeBuffer
 		logger := watermill.NewStdLoggerWithOut(&buf, false, false)
 		topic := watermill.NewShortUUID()
 		consumerGroup := watermill.NewShortUUID()
