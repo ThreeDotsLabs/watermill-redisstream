@@ -263,7 +263,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 	var (
 		streamsGroup = []string{stream, groupStartid}
 
-		fanOutStartid               = "$"
+		fanOutStartid               = s.config.OldestId
 		countFanOut   int64         = 0
 		blockTime     time.Duration = 0
 

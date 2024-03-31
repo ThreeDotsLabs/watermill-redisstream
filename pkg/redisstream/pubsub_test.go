@@ -137,6 +137,7 @@ func TestFanOut(t *testing.T) {
 		SubscriberConfig{
 			Client:        redisClientOrFail(t),
 			Consumer:      watermill.NewShortUUID(),
+			OldestId:      "$",
 			ConsumerGroup: "",
 		},
 		watermill.NewStdLogger(true, false),
@@ -147,6 +148,7 @@ func TestFanOut(t *testing.T) {
 		SubscriberConfig{
 			Client:        redisClientOrFail(t),
 			Consumer:      watermill.NewShortUUID(),
+			OldestId:      "$",
 			ConsumerGroup: "",
 		},
 		watermill.NewStdLogger(true, false),
