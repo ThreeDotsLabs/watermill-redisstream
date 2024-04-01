@@ -445,7 +445,7 @@ func (b *threadSafeBuffer) String() string {
 	return b.b.String()
 }
 
-func TestSubscriber_read(t *testing.T) {
+func TestSubscriber_Read(t *testing.T) {
 
 	t.Run("Without ShouldStopOnReadErrors", func(t *testing.T) {
 		t.Parallel()
