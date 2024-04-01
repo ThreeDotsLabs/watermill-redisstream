@@ -181,7 +181,7 @@ func TestFanOut(t *testing.T) {
 			t.Fatal("msg nil")
 		}
 		t.Logf("subscriber 1: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
-		require.Equal(t, string(msg.Payload), "test"+strconv.Itoa(i))
+		require.Equal(t, "test"+strconv.Itoa(i), string(msg.Payload))
 		msg.Ack()
 	}
 	for i := 10; i < 50; i++ {
@@ -190,7 +190,7 @@ func TestFanOut(t *testing.T) {
 			t.Fatal("msg nil")
 		}
 		t.Logf("subscriber 2: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
-		require.Equal(t, string(msg.Payload), "test"+strconv.Itoa(i))
+		require.Equal(t, "test"+strconv.Itoa(i), string(msg.Payload))
 		msg.Ack()
 	}
 
