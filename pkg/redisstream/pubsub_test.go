@@ -137,7 +137,6 @@ func TestFanOut(t *testing.T) {
 		SubscriberConfig{
 			Client:        redisClientOrFail(t),
 			Consumer:      watermill.NewShortUUID(),
-			OldestId:      "$",
 			ConsumerGroup: "",
 		},
 		watermill.NewStdLogger(true, false),
@@ -148,7 +147,6 @@ func TestFanOut(t *testing.T) {
 		SubscriberConfig{
 			Client:        redisClientOrFail(t),
 			Consumer:      watermill.NewShortUUID(),
-			OldestId:      "$",
 			ConsumerGroup: "",
 		},
 		watermill.NewStdLogger(true, false),
@@ -193,6 +191,75 @@ func TestFanOut(t *testing.T) {
 		}
 		t.Logf("subscriber 2: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
 		require.Equal(t, string(msg.Payload), "test"+strconv.Itoa(i))
+		msg.Ack()
+	}
+
+	require.NoError(t, publisher.Close())
+	require.NoError(t, subscriber1.Close())
+	require.NoError(t, subscriber2.Close())
+}
+
+func TestFanOutWithFullMessageReplay(t *testing.T) {
+	topic := watermill.NewShortUUID()
+
+	subscriber1, err := NewSubscriber(
+		SubscriberConfig{
+			Client:         redisClientOrFail(t),
+			Consumer:       watermill.NewShortUUID(),
+			ConsumerGroup:  "",
+			FanOutOldestId: "0",
+		},
+		watermill.NewStdLogger(true, false),
+	)
+	require.NoError(t, err)
+
+	subscriber2, err := NewSubscriber(
+		SubscriberConfig{
+			Client:         redisClientOrFail(t),
+			Consumer:       watermill.NewShortUUID(),
+			ConsumerGroup:  "",
+			FanOutOldestId: "0",
+		},
+		watermill.NewStdLogger(true, false),
+	)
+	require.NoError(t, err)
+
+	publisher, err := NewPublisher(
+		PublisherConfig{
+			Client: redisClientOrFail(t),
+		},
+		watermill.NewStdLogger(false, false),
+	)
+	require.NoError(t, err)
+	for i := 0; i < 10; i++ {
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
+	}
+
+	messages1, err := subscriber1.Subscribe(context.Background(), topic)
+	require.NoError(t, err)
+	messages2, err := subscriber2.Subscribe(context.Background(), topic)
+	require.NoError(t, err)
+
+	// wait for initial XREAD before publishing messages to avoid message loss
+	time.Sleep(2 * DefaultBlockTime)
+	for i := 10; i < 50; i++ {
+		require.NoError(t, publisher.Publish(topic, message.NewMessage(watermill.NewShortUUID(), []byte("test"+strconv.Itoa(i)))))
+	}
+
+	for i := 0; i < 50; i++ {
+		msg := <-messages1
+		require.NotNil(t, msg)
+
+		t.Logf("subscriber 1: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		require.Equal(t, "test"+strconv.Itoa(i), string(msg.Payload))
+		msg.Ack()
+	}
+	for i := 0; i < 50; i++ {
+		msg := <-messages2
+		require.NotNil(t, msg)
+
+		t.Logf("subscriber 2: %v %v %v", msg.UUID, msg.Metadata, string(msg.Payload))
+		require.Equal(t, "test"+strconv.Itoa(i), string(msg.Payload))
 		msg.Ack()
 	}
 
