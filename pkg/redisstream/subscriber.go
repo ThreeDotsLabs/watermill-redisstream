@@ -100,6 +100,11 @@ type SubscriberConfig struct {
 	// When using "$", the consumer group will consume from the latest message.
 	OldestId string
 
+	// If consumer group in not set, for fanout start consumption from the specified message ID.
+	// When using "0", the consumer group will consume from the very first message.
+	// When using "$", the consumer group will consume from the latest message.
+	FanOutOldestId string
+
 	// If this is set, it will be called to decide whether a pending message that
 	// has been idle for more than MaxIdleTime should actually be claimed.
 	// If this is not set, then all pending messages that have been idle for more than MaxIdleTime will be claimed.
@@ -147,6 +152,10 @@ func (sc *SubscriberConfig) setDefaults() {
 	// Consume from scratch by default
 	if sc.OldestId == "" {
 		sc.OldestId = "0"
+	}
+
+	if sc.FanOutOldestId == "" {
+		sc.FanOutOldestId = "$"
 	}
 }
 
@@ -268,7 +277,7 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 	var (
 		streamsGroup = []string{stream, groupStartid}
 
-		fanOutStartid               = "$"
+		fanOutStartid               = s.config.FanOutOldestId
 		countFanOut   int64         = 0
 		blockTime     time.Duration = 0
 
