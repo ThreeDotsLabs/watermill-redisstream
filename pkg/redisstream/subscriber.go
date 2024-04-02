@@ -101,8 +101,8 @@ type SubscriberConfig struct {
 	OldestId string
 
 	// If consumer group in not set, for fanout start consumption from the specified message ID.
-	// When using "0", the consumer group will consume from the very first message.
-	// When using "$", the consumer group will consume from the latest message.
+	// When using "0", the consumer will consume from the very first message.
+	// When using "$", the consumer will consume from the latest message.
 	FanOutOldestId string
 
 	// If this is set, it will be called to decide whether a pending message that
