@@ -424,7 +424,11 @@ OUTER_LOOP:
 					MinIdle:  s.config.MaxIdleTime,
 					Messages: []string{xp.ID},
 				}).Result()
-				if err != nil {
+				if err == redis.Nil {
+					// Any messages that are nil, should be xacked and skipped
+					s.client.XAck(ctx, stream, s.config.ConsumerGroup, xp.ID)
+					continue
+				} else if err != nil {
 					s.logger.Error(
 						"xclaim fail",
 						err,
