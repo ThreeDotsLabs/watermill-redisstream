@@ -46,7 +46,17 @@ func (DefaultMarshallerUnmarshaller) Marshal(_ string, msg *message.Message) (ma
 }
 
 func (DefaultMarshallerUnmarshaller) Unmarshal(values map[string]interface{}) (msg *message.Message, err error) {
-	msg = message.NewMessage(values[UUIDHeaderKey].(string), []byte(values["payload"].(string)))
+	var uuid, payload any
+	uuid, payload = values[UUIDHeaderKey], values["payload"]
+	if uuid == nil {
+		return nil, errors.Errorf("%s key is missing as part of the message", UUIDHeaderKey)
+	}
+
+	if payload == nil {
+		payload = ""
+	}
+
+	msg = message.NewMessage(uuid.(string), []byte(payload.(string)))
 
 	md := values["metadata"]
 	if md != nil {
