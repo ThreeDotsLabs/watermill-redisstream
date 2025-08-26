@@ -1,7 +1,6 @@
 package redisstream
 
 import (
-	"context"
 	"sync"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -91,7 +90,7 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 			maxlen = p.config.DefaultMaxlen
 		}
 
-		id, err := p.client.XAdd(context.Background(), &redis.XAddArgs{
+		id, err := p.client.XAdd(msg.Context(), &redis.XAddArgs{
 			Stream: topic,
 			Values: values,
 			MaxLen: maxlen,
