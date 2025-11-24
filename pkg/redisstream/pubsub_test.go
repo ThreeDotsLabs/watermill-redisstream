@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -630,4 +631,67 @@ func TestSubscriber_Read(t *testing.T) {
 		require.NoError(t, sub.Close())
 	})
 
+	t.Run("With DisableIndefiniteInitialBlock", func(t *testing.T) {
+		t.Parallel()
+
+		topic := watermill.NewShortUUID()
+		consumerGroup := watermill.NewShortUUID()
+		consumer := watermill.NewShortUUID()
+
+		cases := []struct {
+			name                  string
+			expectedBlockedClient bool
+		}{
+			{
+				name:                  "should have blocked client",
+				expectedBlockedClient: true,
+			},
+			{
+				name:                  "should not have blocked client",
+				expectedBlockedClient: false,
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				rdb := redisClientOrFail(t)
+				sub, err := NewSubscriber(SubscriberConfig{
+					Client:                        rdb,
+					ConsumerGroup:                 consumerGroup,
+					Consumer:                      consumer,
+					DisableIndefiniteInitialBlock: !tc.expectedBlockedClient,
+					BlockTime:                     200 * time.Millisecond,
+				}, nil)
+				require.NoError(t, err)
+
+				ctx, cancel := context.WithCancel(context.Background())
+				_, err = sub.Subscribe(ctx, topic)
+				require.NoError(t, err)
+
+				// wait for all background goroutines to kick off
+				time.Sleep(100 * time.Millisecond)
+				cancel()
+				// wait for a blocking time to pass, if applicable
+				time.Sleep(120 * time.Millisecond)
+
+				res, err := rdb.ClientList(context.Background()).Result()
+				require.NoError(t, err)
+
+				require.Equal(t, tc.expectedBlockedClient, checkBlockedClients(res))
+
+				require.NoError(t, sub.Close())
+			})
+		}
+	})
+}
+
+func checkBlockedClients(clientsString string) bool {
+	clients := strings.Split(clientsString, "\n")
+	for _, client := range clients {
+		if strings.Contains(client, "flags=b") {
+			return true
+		}
+	}
+
+	return false
 }

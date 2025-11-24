@@ -119,6 +119,13 @@ type SubscriberConfig struct {
 	// should return the read method and close the subscriber or just log the error
 	// and continue.
 	ShouldStopOnReadErrors func(error) bool
+
+	// If this set to true, the initial call to XRead* will block using BlockTime configuration setting.
+	// By default, the initial XRead* call is blocking indefinitely (timeout=0), which may lead to reader goroutine leak
+	// in case there are no messages in the stream.
+	// Context cancellation does not work due to the way go-redis handles connection management.
+	// For more information, see https://github.com/redis/go-redis/issues/2556.
+	DisableIndefiniteInitialBlock bool
 }
 
 func (sc *SubscriberConfig) setDefaults() {
@@ -285,6 +292,10 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 		xs  *redis.XStream
 		err error
 	)
+
+	if s.config.DisableIndefiniteInitialBlock {
+		blockTime = s.config.BlockTime
+	}
 
 	if s.config.ConsumerGroup != "" {
 		// 1. get pending message from idle consumer
