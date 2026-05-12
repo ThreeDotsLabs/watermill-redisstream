@@ -144,60 +144,11 @@ func TestLogPoolTimeoutEmitsRichDiagnostic(t *testing.T) {
 	assert.Equal(t, 1, matched, "expected exactly one rich pool-timeout log; got %d (captured=%+v)", matched, captured)
 }
 
-func TestNoPublishTimeoutDisablesDeadline(t *testing.T) {
-	// PublishTimeout=NoPublishTimeout disables the library-imposed deadline.
-	// With a saturated pool and a long PoolTimeout, Publish should NOT return
-	// quickly: confirming no library timeout was applied. We cancel the
-	// holder before PoolTimeout fires to avoid hanging the test.
-	client := redis.NewClient(&redis.Options{
-		Addr:        "127.0.0.1:6379",
-		PoolSize:    1,
-		PoolTimeout: 2 * time.Second,
-	})
-	defer client.Close()
-	require.NoError(t, client.Ping(context.Background()).Err())
-
-	holdCtx, holdCancel := context.WithCancel(context.Background())
-	go func() {
-		_, _ = client.XRead(holdCtx, &redis.XReadArgs{
-			Streams: []string{"hold-disabled-" + watermill.NewShortUUID(), "$"},
-			Block:   5 * time.Second,
-		}).Result()
-	}()
-	time.Sleep(100 * time.Millisecond)
-
-	publisher, err := NewPublisher(PublisherConfig{
-		Client:         client,
-		PublishTimeout: NoPublishTimeout,
-	}, nil)
-	require.NoError(t, err)
-	defer publisher.Close()
-
-	msg := message.NewMessage(watermill.NewUUID(), []byte("test"))
-	start := time.Now()
-	done := make(chan error, 1)
-	go func() {
-		done <- publisher.Publish("topic-disabled-"+watermill.NewShortUUID(), msg)
-	}()
-
-	// With a library timeout this would return within hundreds of ms.
-	// Without it, Publish should still be waiting on PoolTimeout (2s).
-	select {
-	case <-done:
-		t.Fatalf("Publish returned in %s: with NoPublishTimeout it should still be waiting on the pool", time.Since(start))
-	case <-time.After(800 * time.Millisecond):
-		// expected: Publish is still waiting on pool, library imposed no shorter deadline
-	}
-
-	// Now release the holder and let Publish finish (cleanup).
-	holdCancel()
-	<-done
-}
-
-func TestPublishTimeoutEnforcedWhenPoolExhausted(t *testing.T) {
+func TestPublishFailsFastOnPoolExhaustion(t *testing.T) {
 	// PoolSize=1 + PoolTimeout=10min simulates the misconfigured setup that
-	// causes Publish to hang forever today. With PublishTimeout=500ms,
-	// Publish must return within ~500ms regardless.
+	// causes Publish to hang forever today. The fail-fast check inside
+	// Publish should detect the exhausted pool and return immediately,
+	// well under PublishTimeout (which is the backup safety net).
 	client := tinyPoolClient(t, 1)
 	defer client.Close()
 
@@ -222,10 +173,31 @@ func TestPublishTimeoutEnforcedWhenPoolExhausted(t *testing.T) {
 
 	msg := message.NewMessage(watermill.NewUUID(), []byte("test"))
 	start := time.Now()
-	err = publisher.Publish("topic-pub-timeout-"+watermill.NewShortUUID(), msg)
+	err = publisher.Publish("topic-fail-fast-"+watermill.NewShortUUID(), msg)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
-	assert.LessOrEqual(t, elapsed, 2*time.Second,
-		"Publish should return within ~PublishTimeout, took %s", elapsed)
+	assert.Contains(t, err.Error(), "pool of size 1 is exhausted")
+	// Fail-fast should return far below PublishTimeout. Allow 100ms slack
+	// for goroutine scheduling on a loaded CI box.
+	assert.Less(t, elapsed, 100*time.Millisecond,
+		"Publish should fail fast on pool exhaustion, took %s", elapsed)
+}
+
+func TestNoPublishTimeoutAllowsPublish(t *testing.T) {
+	// With NoPublishTimeout and a healthy pool, Publish should succeed.
+	// (NoPublishTimeout disables the per-XAdd library deadline; fail-fast
+	// still runs but does not fire with an unsaturated pool.)
+	client := tinyPoolClient(t, 10)
+	defer client.Close()
+
+	publisher, err := NewPublisher(PublisherConfig{
+		Client:         client,
+		PublishTimeout: NoPublishTimeout,
+	}, nil)
+	require.NoError(t, err)
+	defer publisher.Close()
+
+	msg := message.NewMessage(watermill.NewUUID(), []byte("test"))
+	require.NoError(t, publisher.Publish("topic-no-timeout-"+watermill.NewShortUUID(), msg))
 }

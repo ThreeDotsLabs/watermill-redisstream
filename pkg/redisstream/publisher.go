@@ -105,6 +105,10 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 			maxlen = p.config.DefaultMaxlen
 		}
 
+		if err := p.checkPoolNotExhausted(); err != nil {
+			return errors.Wrapf(err, "cannot xadd message %s", msg.UUID)
+		}
+
 		ctx := msg.Context()
 		var cancel context.CancelFunc
 		if p.config.PublishTimeout > 0 {
@@ -127,6 +131,34 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 		p.logger.Trace("Message sent to redis stream", logFields)
 	}
 
+	return nil
+}
+
+// checkPoolNotExhausted returns an error if the client's connection pool is
+// currently fully utilized, so Publish can fail fast instead of queueing on
+// PoolTimeout / PublishTimeout. Skipped when the pool size cannot be
+// determined (non-standard UniversalClient implementations).
+//
+// Cost: ~16ns per call (one PoolStats read + a type switch). Negligible
+// relative to a network XAdd.
+func (p *Publisher) checkPoolNotExhausted() error {
+	poolSize, ok := effectivePoolSize(p.client)
+	if !ok {
+		return nil
+	}
+	stats := p.client.PoolStats()
+	if stats == nil {
+		return nil
+	}
+	inUse := int(stats.TotalConns - stats.IdleConns)
+	if inUse >= poolSize {
+		return errors.Errorf(
+			"redis pool of size %d is exhausted (%d connections in use); "+
+				"Publish would block. Increase Client.PoolSize or reduce concurrent "+
+				"long-blocking operations (e.g. Subscriber reads on the same client)",
+			poolSize, inUse,
+		)
+	}
 	return nil
 }
 
