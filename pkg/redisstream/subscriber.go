@@ -2,6 +2,8 @@ package redisstream
 
 import (
 	"context"
+	stderrors "errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -186,6 +188,12 @@ func (s *Subscriber) Subscribe(ctx context.Context, topic string) (<-chan *messa
 		"consumer_group": s.config.ConsumerGroup,
 		"consumer_uuid":  s.config.Consumer,
 	}
+
+	if err := s.checkPoolForSubscribe(logFields); err != nil {
+		s.subscribersWg.Done()
+		return nil, err
+	}
+
 	s.logger.Info("Subscribing to redis stream topic", logFields)
 
 	// we don't want to have buffered channel to not consume messsage from redis stream when consumer is not consuming
@@ -204,6 +212,86 @@ func (s *Subscriber) Subscribe(ctx context.Context, topic string) (<-chan *messa
 	}()
 
 	return output, nil
+}
+
+// checkPoolForSubscribe verifies that the configured Redis client's connection
+// pool has enough free slots to accept a new long-blocking subscriber.
+//
+// The check is empirical: it reads PoolStats() to see how many connections are
+// currently in use across all consumers sharing this client (this Subscriber's
+// other Subscribes, other Subscriber instances, the Publisher, app code), and
+// compares against the configured PoolSize.
+//
+// After Subscribe completes, the new read goroutine permanently holds 1 slot
+// for its blocking XReadGroup. So we need at least 2 free slots before
+// Subscribe: 1 will be consumed by the new reader, and at least 1 must remain
+// for transient operations (XPendingExt/XAck/XAdd) elsewhere.
+//
+// Skipped when the pool size cannot be determined from a non-standard
+// UniversalClient implementation.
+func (s *Subscriber) checkPoolForSubscribe(logFields watermill.LogFields) error {
+	poolSize, ok := effectivePoolSize(s.client)
+	if !ok {
+		return nil
+	}
+	stats := s.client.PoolStats()
+	if stats == nil {
+		return nil
+	}
+
+	inUse := int(stats.TotalConns - stats.IdleConns)
+	free := poolSize - inUse
+
+	if free < 2 {
+		return fmt.Errorf(
+			"redis pool of size %d has only %d free slot(s) (%d in use); this Subscribe "+
+				"would consume the last free slot and leave the pool with no room for "+
+				"transient operations (XPendingExt/XAck/XAdd) on this or any other "+
+				"consumer sharing this client. Increase Client.PoolSize. With Go 1.25 "+
+				"container-aware GOMAXPROCS, the default 10*GOMAXPROCS may be too small "+
+				"in 1-CPU containers; set Client.PoolSize explicitly. "+
+				"See https://go.dev/blog/container-aware-gomaxprocs",
+			poolSize, free, inUse,
+		)
+	}
+	if free < 3 {
+		s.logger.Error(
+			"redis pool will have no headroom after this Subscribe; concurrent transient "+
+				"operations across consumers may time out. Consider increasing Client.PoolSize.",
+			nil,
+			logFields.Add(watermill.LogFields{
+				"pool_size":   poolSize,
+				"in_use":      inUse,
+				"free_before": free,
+			}),
+		)
+	}
+	return nil
+}
+
+// logPoolTimeout emits a rich diagnostic when err is a redis pool-timeout.
+// Rate limiting is handled by the existing 500ms error-sleep in the read/claim
+// loops; this helper logs unconditionally.
+//
+// Caller must check errors.Is(err, redis.ErrPoolTimeout) first: this is
+// only called when we already know we have a pool timeout.
+func (s *Subscriber) logPoolTimeout(err error, logFields watermill.LogFields) {
+	fields := logFields.Copy()
+	if stats := s.client.PoolStats(); stats != nil {
+		fields = fields.Add(watermill.LogFields{
+			"pool_timeouts": stats.Timeouts,
+			"total_conns":   stats.TotalConns,
+			"idle_conns":    stats.IdleConns,
+		})
+	}
+	s.logger.Error(
+		"redis connection pool timeout: pool is too small for the active workload. "+
+			"Increase Client.PoolSize (default 10*GOMAXPROCS may be too small in 1-CPU "+
+			"containers under Go 1.25 container-aware GOMAXPROCS). "+
+			"See https://go.dev/blog/container-aware-gomaxprocs",
+		err,
+		fields,
+	)
 }
 
 func (s *Subscriber) consumeMessages(ctx context.Context, topic string, output chan *message.Message, logFields watermill.LogFields) (consumeMessageClosed chan struct{}, err error) {
@@ -348,7 +436,11 @@ func (s *Subscriber) read(ctx context.Context, stream string, readChannel chan<-
 				}
 				// prevent excessive output from abnormal connections
 				time.Sleep(500 * time.Millisecond)
-				s.logger.Error("read fail", err, logFields)
+				if stderrors.Is(err, redis.ErrPoolTimeout) {
+					s.logPoolTimeout(err, logFields)
+				} else {
+					s.logger.Error("read fail", err, logFields)
+				}
 			}
 			if len(xss) < 1 || len(xss[0].Messages) < 1 {
 				continue
@@ -411,11 +503,11 @@ OUTER_LOOP:
 			Count:  s.config.ClaimBatchSize,
 		}).Result()
 		if err != nil {
-			s.logger.Error(
-				"xpendingext fail",
-				err,
-				logFields,
-			)
+			if stderrors.Is(err, redis.ErrPoolTimeout) {
+				s.logPoolTimeout(err, logFields)
+			} else {
+				s.logger.Error("xpendingext fail", err, logFields)
+			}
 			continue
 		}
 		for _, xp = range xps {
@@ -440,11 +532,11 @@ OUTER_LOOP:
 					s.client.XAck(ctx, stream, s.config.ConsumerGroup, xp.ID)
 					continue
 				} else if err != nil {
-					s.logger.Error(
-						"xclaim fail",
-						err,
-						logFields.Add(watermill.LogFields{"xp": xp}),
-					)
+					if stderrors.Is(err, redis.ErrPoolTimeout) {
+						s.logPoolTimeout(err, logFields.Add(watermill.LogFields{"xp": xp}))
+					} else {
+						s.logger.Error("xclaim fail", err, logFields.Add(watermill.LogFields{"xp": xp}))
+					}
 					continue OUTER_LOOP
 				}
 				if len(xm) > 0 {

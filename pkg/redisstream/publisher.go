@@ -1,13 +1,20 @@
 package redisstream
 
 import (
+	"context"
 	"sync"
+	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"
 )
+
+// NoPublishTimeout can be set as PublisherConfig.PublishTimeout to disable
+// the per-XAdd deadline. Use only when callers always pass a context with
+// their own deadline via msg.Context() and you want no library-imposed cap.
+const NoPublishTimeout time.Duration = -1
 
 type Publisher struct {
 	config PublisherConfig
@@ -43,11 +50,19 @@ type PublisherConfig struct {
 	Marshaller    Marshaller
 	Maxlens       map[string]int64
 	DefaultMaxlen int64
+
+	// PublishTimeout caps the duration of each XAdd call. Defaults to 15s
+	// when zero. Set to NoPublishTimeout to disable the library-imposed
+	// deadline (caller's msg.Context() still applies).
+	PublishTimeout time.Duration
 }
 
 func (c *PublisherConfig) setDefaults() {
 	if c.Marshaller == nil {
 		c.Marshaller = DefaultMarshallerUnmarshaller{}
+	}
+	if c.PublishTimeout == 0 {
+		c.PublishTimeout = 15 * time.Second
 	}
 }
 
@@ -90,12 +105,20 @@ func (p *Publisher) Publish(topic string, msgs ...*message.Message) error {
 			maxlen = p.config.DefaultMaxlen
 		}
 
-		id, err := p.client.XAdd(msg.Context(), &redis.XAddArgs{
+		ctx := msg.Context()
+		var cancel context.CancelFunc
+		if p.config.PublishTimeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, p.config.PublishTimeout)
+		}
+		id, err := p.client.XAdd(ctx, &redis.XAddArgs{
 			Stream: topic,
 			Values: values,
 			MaxLen: maxlen,
 			Approx: true,
 		}).Result()
+		if cancel != nil {
+			cancel()
+		}
 		if err != nil {
 			return errors.Wrapf(err, "cannot xadd message %s", msg.UUID)
 		}
